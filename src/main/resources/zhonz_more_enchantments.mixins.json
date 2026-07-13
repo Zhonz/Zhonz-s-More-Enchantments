@@ -1,0 +1,13 @@
+{
+    "required": true,
+    "minVersion": "0.8",
+    "package": "com.zhonz.moreenchantments.mixin",
+    "compatibilityLevel": "JAVA_21",
+    "refmap": "zhonz_more_enchantments.refmap.json",
+    "mixins": [
+        "AnvilMenuMixin"
+    ],
+    "injectors": {
+        "defaultRequire": 1
+    }
+}

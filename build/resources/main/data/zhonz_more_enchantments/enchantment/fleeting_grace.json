@@ -1,0 +1,18 @@
+{
+  "description": {
+    "translate": "enchantment.zhonz_more_enchantments.fleeting_grace"
+  },
+  "supported_items": "#minecraft:enchantable/armor",
+  "weight": 2,
+  "max_level": 1,
+  "min_cost": {
+    "base": 30,
+    "per_level_above_first": 0
+  },
+  "max_cost": {
+    "base": 50,
+    "per_level_above_first": 0
+  },
+  "anvil_cost": 4,
+  "slots": ["chest", "legs", "feet", "head"]
+}

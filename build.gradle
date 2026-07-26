@@ -1,9 +1,21 @@
+buildscript {
+    repositories {
+        maven { url 'https://maven.neoforged.net/releases' }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'net.neoforged.moddev:net.neoforged.moddev.gradle.plugin:2.0.141'
+    }
+}
+
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id 'net.neoforged.moddev' version '2.0.141'
     id 'idea'
 }
+
+apply plugin: 'net.neoforged.moddev'
 
 tasks.named('wrapper', Wrapper).configure {
     distributionType = Wrapper.DistributionType.BIN
@@ -19,8 +31,8 @@ sourceSets.main.resources {
 }
 
 repositories {
-    maven { url 'https://maven.aliyun.com/repository/public' }
-    maven { url 'https://maven.aliyun.com/repository/central' }
+    maven { url 'https://maven.neoforged.net/releases' }
+    mavenCentral()
 }
 
 base {
@@ -30,7 +42,6 @@ base {
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
-        vendor = JvmVendorSpec.ORACLE
     }
 }
 

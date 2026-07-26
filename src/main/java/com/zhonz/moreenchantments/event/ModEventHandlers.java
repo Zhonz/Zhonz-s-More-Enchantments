@@ -5,6 +5,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
@@ -34,7 +35,7 @@ import net.neoforged.neoforge.event.AnvilUpdateEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDropsEvent;
-import net.neoforged.neoforge.event.entity.living.LivingHurtEvent;
+import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
 import java.util.ArrayList;
@@ -43,6 +44,7 @@ import java.util.Random;
 
 public class ModEventHandlers {
 
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("ZhonzMoreEnchantments");
     private static final Random RANDOM = new Random();
 
     // ===== Persistent Data Keys =====
@@ -78,11 +80,12 @@ public class ModEventHandlers {
 
     // ===== Utility Methods =====
 
-    private static int getEnchantmentLevel(LivingEntity entity, Holder<Enchantment> enchantment) {
+    private static int getEnchantmentLevel(LivingEntity entity, ResourceKey<Enchantment> enchantment) {
+        Holder<Enchantment> holder = ModEnchantments.getHolder(enchantment);
         int level = 0;
         for (EquipmentSlot slot : EquipmentSlot.values()) {
             ItemStack stack = entity.getItemBySlot(slot);
-            int enchantLevel = stack.getEnchantmentLevel(enchantment);
+            int enchantLevel = stack.getEnchantmentLevel(holder);
             if (enchantLevel > level) {
                 level = enchantLevel;
             }
@@ -90,18 +93,19 @@ public class ModEventHandlers {
         return level;
     }
 
-    private static int getMainHandEnchantmentLevel(LivingEntity entity, Holder<Enchantment> enchantment) {
-        return entity.getMainHandItem().getEnchantmentLevel(enchantment);
+    private static int getMainHandEnchantmentLevel(LivingEntity entity, ResourceKey<Enchantment> enchantment) {
+        return entity.getMainHandItem().getEnchantmentLevel(ModEnchantments.getHolder(enchantment));
     }
 
-    private static int getSlotEnchantmentLevel(LivingEntity entity, Holder<Enchantment> enchantment, EquipmentSlot slot) {
-        return entity.getItemBySlot(slot).getEnchantmentLevel(enchantment);
+    private static int getSlotEnchantmentLevel(LivingEntity entity, ResourceKey<Enchantment> enchantment, EquipmentSlot slot) {
+        return entity.getItemBySlot(slot).getEnchantmentLevel(ModEnchantments.getHolder(enchantment));
     }
 
-    private static boolean hasEnchantmentInInventory(Player player, Holder<Enchantment> enchantment) {
+    private static boolean hasEnchantmentInInventory(Player player, ResourceKey<Enchantment> enchantment) {
+        Holder<Enchantment> holder = ModEnchantments.getHolder(enchantment);
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
             ItemStack stack = player.getInventory().getItem(i);
-            if (stack.getEnchantmentLevel(enchantment) > 0) {
+            if (stack.getEnchantmentLevel(holder) > 0) {
                 return true;
             }
         }
@@ -208,7 +212,7 @@ public class ModEventHandlers {
     // ===== LivingHurtEvent - Pre-Armor Damage Recording =====
 
     @SubscribeEvent
-    public static void onLivingHurt(LivingHurtEvent event) {
+    public static void onLivingHurt(LivingIncomingDamageEvent event) {
         LivingEntity defender = event.getEntity();
         if (defender.level().isClientSide()) return;
 
@@ -237,13 +241,13 @@ public class ModEventHandlers {
     // ===== LivingDamageEvent - Final Damage Calculation =====
 
     @SubscribeEvent
-    public static void onLivingDamage(LivingDamageEvent event) {
+    public static void onLivingDamage(LivingDamageEvent.Pre event) {
         LivingEntity defender = event.getEntity();
         if (defender.level().isClientSide()) return;
 
         DamageSource source = event.getSource();
         Entity attackerEntity = source.getEntity();
-        float amount = event.getAmount();
+        float amount = event.getNewDamage();
 
         // === Attacker-Side Effects (Outgoing Damage) ===
         if (attackerEntity instanceof LivingEntity attacker) {
@@ -307,13 +311,13 @@ public class ModEventHandlers {
             }
         }
 
-        event.setAmount(amount);
+        event.setNewDamage(amount);
     }
 
     /**
      * Apply attacker-side enchantment effects (modify outgoing damage).
      */
-    private static float applyAttackerEnchantments(LivingEntity attacker, LivingEntity defender, DamageSource source, float amount, LivingDamageEvent event) {
+    private static float applyAttackerEnchantments(LivingEntity attacker, LivingEntity defender, DamageSource source, float amount, LivingDamageEvent.Pre event) {
         ItemStack mainHand = attacker.getMainHandItem();
 
         // --- 1. 终结 Finale: If base attack damage >= 7, deal 100000x damage ---
@@ -607,7 +611,7 @@ public class ModEventHandlers {
     /**
      * Apply defender-side enchantment effects (modify incoming damage / react to damage).
      */
-    private static float applyDefenderEnchantments(LivingEntity defender, DamageSource source, float amount, LivingDamageEvent event) {
+    private static float applyDefenderEnchantments(LivingEntity defender, DamageSource source, float amount, LivingDamageEvent.Pre event) {
         Entity attackerEntity = source.getEntity();
 
         // --- 5. 深海的供养 Deep Sea's Grace: Heal after taking damage ---
@@ -755,7 +759,7 @@ public class ModEventHandlers {
                 // Check if any equipped item has Divine Protection
                 for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
                     ItemStack armor = entity.getItemBySlot(slot);
-                    if (armor.getEnchantmentLevel(ModEnchantments.DIVINE_PROTECTION) > 0) {
+                    if (armor.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.DIVINE_PROTECTION)) > 0) {
                         event.setCanceled(true);
                         entity.setHealth(entity.getMaxHealth() * 0.5f);
                         entity.removeAllEffects();
@@ -765,7 +769,7 @@ public class ModEventHandlers {
                         // Remove 25% of this item's durability
                         if (armor.isDamageableItem()) {
                             int durabilityToRemove = (armor.getMaxDamage() - armor.getDamageValue()) / 4;
-                            armor.hurtAndBreak(durabilityToRemove, entity, s -> {});
+                            armor.hurtAndBreak(durabilityToRemove, entity, slot);
                         }
                         if (entity.level() instanceof ServerLevel serverLevel) {
                             serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
@@ -788,7 +792,7 @@ public class ModEventHandlers {
     // ===== PlayerTickEvent - Tick-Based Effects =====
 
     @SubscribeEvent
-    public static void onPlayerTick(PlayerTickEvent event) {
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
         Player player = event.getEntity();
         if (player.level().isClientSide()) return;
 
@@ -837,7 +841,7 @@ public class ModEventHandlers {
                 if (supremeArtLevel > 0) {
                     double rangeBonus = supremeArtLevel * 2.0; // +2/4 blocks
                     entityRangeAttr.addTransientModifier(new AttributeModifier(
-                            SUPREME_ART_RANGE_MODIFIER, rangeBonus, AttributeModifier.Operation.ADDITION
+                            SUPREME_ART_RANGE_MODIFIER, rangeBonus, AttributeModifier.Operation.ADD_VALUE
                     ));
                 }
             }
@@ -847,7 +851,7 @@ public class ModEventHandlers {
                 if (supremeArtLevel > 0) {
                     double rangeBonus = supremeArtLevel * 2.0;
                     blockRangeAttr.addTransientModifier(new AttributeModifier(
-                            SUPREME_ART_RANGE_MODIFIER, rangeBonus, AttributeModifier.Operation.ADDITION
+                            SUPREME_ART_RANGE_MODIFIER, rangeBonus, AttributeModifier.Operation.ADD_VALUE
                     ));
                 }
             }
@@ -858,7 +862,7 @@ public class ModEventHandlers {
                 if (supremeArtLevel > 0) {
                     double speedBonus = 0.3 * supremeArtLevel;
                     attackSpeedAttr.addTransientModifier(new AttributeModifier(
-                            SUPREME_ART_ATTACK_SPEED_MODIFIER, speedBonus, AttributeModifier.Operation.MULTIPLY_BASE
+                            SUPREME_ART_ATTACK_SPEED_MODIFIER, speedBonus, AttributeModifier.Operation.ADD_MULTIPLIED_BASE
                     ));
                 }
             }
@@ -981,7 +985,7 @@ public class ModEventHandlers {
             if (tickCount % 20 == 0) {
                 for (EquipmentSlot slot : EquipmentSlot.values()) {
                     ItemStack stack = player.getItemBySlot(slot);
-                    if (stack.getEnchantmentLevel(ModEnchantments.DIVINE_CURSE) > 0 && stack.isDamageableItem()) {
+                    if (stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.DIVINE_CURSE)) > 0 && stack.isDamageableItem()) {
                         int durabilityToRemove = Math.max(1, (stack.getMaxDamage() - stack.getDamageValue()) / 100);
                         stack.hurtAndBreak(durabilityToRemove, player, slot);
                     }
@@ -1008,6 +1012,20 @@ public class ModEventHandlers {
             }
             // Note: The throw mechanic (charging and throwing mace like trident)
             // requires a Mixin on MaceItem or a custom item interaction handler.
+        }
+
+        // --- 33. 不完整的预知眼 Incomplete Foreknowledge Eye: Detect nearby hostiles ---
+        int foreknowledgeEyeLevel = getSlotEnchantmentLevel(player, ModEnchantments.INCOMPLETE_FOREKNOWLEDGE_EYE, EquipmentSlot.HEAD);
+        if (foreknowledgeEyeLevel > 0) {
+            // Every 3 seconds, detect hostiles within 16 blocks and make them glow briefly
+            if (tickCount % 60 == 0) {
+                double detectRange = 16.0;
+                AABB box = player.getBoundingBox().inflate(detectRange);
+                List<Monster> hostiles = player.level().getEntitiesOfClass(Monster.class, box, mob -> mob.isAlive());
+                for (Monster hostile : hostiles) {
+                    hostile.addEffect(new MobEffectInstance(MobEffects.GLOWING, 60, 0));
+                }
+            }
         }
 
         // ===== Cooldown Management =====

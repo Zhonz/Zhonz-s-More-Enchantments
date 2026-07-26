@@ -615,18 +615,15 @@ public class ModEventHandlers {
         if (deepSeasGraceLevel > 0) {
             float healRatio = deepSeasGraceLevel == 1 ? 0.05f : (deepSeasGraceLevel == 2 ? 0.10f : 0.20f);
             float healAmount = defender.getMaxHealth() * healRatio;
-            // Apply full damage first, then heal after damage is applied
+            // Apply full damage first, then heal on next tick
             if (defender.level() instanceof ServerLevel serverLevel) {
-                serverLevel.getServer().tell(new net.minecraft.server.TickTask(
-                        serverLevel.getServer().getTickCount() + 1,
-                        () -> {
-                            if (defender.isAlive()) {
-                                defender.heal(healAmount);
-                            }
-                        }
-                ));
+                serverLevel.getServer().tell(new net.minecraft.server.TickTask(1, () -> {
+                    if (defender.isAlive()) {
+                        defender.heal(healAmount);
+                    }
+                }));
             }
-            LOGGER.info("[DeepSeasGrace] Level {}: will heal {} = {}% max HP after damage",
+            LOGGER.info("[DeepSeasGrace] Level {}: will heal {} = {}% max HP on next tick",
                     deepSeasGraceLevel, healAmount, (int) (healRatio * 100));
         }
 
@@ -658,11 +655,9 @@ public class ModEventHandlers {
         }
 
         // --- 8. 鱼丸 Fishball: Transfer damage from nearby same-type entities to the wearer ---
-        // Note: This is handled in onLivingDamagePre by checking if the defender has Fishball.
-        // The actual logic of transferring damage FROM others TO the wearer requires a global check.
-        // For simplicity, we implement it as: when a same-type entity nearby takes damage,
-        // a portion of that damage is redirected to the Fishball wearer.
-        // This is handled in the main onLivingDamagePre method below.
+        // When an entity WITHOUT Fishball takes damage, check for nearby same-type entities WITH Fishball.
+        // If found, transfer 30% of the damage to the Fishball wearer (they take the damage for the ally).
+        // Entities WITH Fishball don't transfer their damage away (they're the tanks).
         {
             int fishballLevel = getEnchantmentLevel(defender, ModEnchantments.FISHBALL);
             if (fishballLevel == 0) {

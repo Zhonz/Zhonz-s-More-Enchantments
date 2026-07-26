@@ -219,10 +219,15 @@ public class ModEventHandlers {
 
     // ===== LivingHurtEvent - Pre-Armor Damage Recording =====
 
+    // 防止递归调用的标志
+    private static boolean isProcessingCustomDamage = false;
+
     @SubscribeEvent
     public static void onLivingHurt(LivingIncomingDamageEvent event) {
         LivingEntity defender = event.getEntity();
         if (defender.level().isClientSide()) return;
+        // 防止递归：如果是我们自己调用的hurt()，跳过附魔处理
+        if (isProcessingCustomDamage) return;
 
         DamageSource source = event.getSource();
         Entity attackerEntity = source.getEntity();
@@ -234,6 +239,65 @@ public class ModEventHandlers {
             if (shellStripAttackerLevel > 0) {
                 CompoundTag defenderData = getEntityData(defender);
                 defenderData.putFloat(KEY_SHELL_STRIP_RAW, rawDamage);
+            }
+
+            // === 1. 终结 Finale: If base attack damage >= 7, deal 100000x damage (pre-armor) ===
+            int finaleLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.FINALE);
+            if (finaleLevel > 0) {
+                double attackDamage = attacker.getAttributeValue(Attributes.ATTACK_DAMAGE);
+                if (attackDamage >= 7.0) {
+                    LOGGER.info("[Finale] Triggered! Instant kill (100000x damage)");
+                    event.setCanceled(true);
+                    // Reduce weapon durability
+                    ItemStack mainHand = attacker.getMainHandItem();
+                    if (mainHand.isDamageableItem()) {
+                        int durabilityCost = (int) Math.min(rawDamage, mainHand.getMaxDamage() - mainHand.getDamageValue());
+                        if (durabilityCost > 0) {
+                            mainHand.hurtAndBreak(durabilityCost, attacker, EquipmentSlot.MAINHAND);
+                        }
+                    }
+                    // 直接设置血量为0并触发死亡
+                    defender.setHealth(0);
+                    defender.die(source);
+                    return;
+                }
+            }
+
+            // === 32. 必须开辟的通路 Must Open Path: 1000% damage (pre-armor) ===
+            int mustOpenPathLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.MUST_OPEN_PATH);
+            if (mustOpenPathLevel > 0) {
+                CompoundTag data = getEntityData(attacker);
+                int cooldown = data.contains(KEY_MUST_OPEN_PATH_CD) ? data.getInt(KEY_MUST_OPEN_PATH_CD) : 0;
+                if (cooldown <= 0) {
+                    float newDamage = rawDamage * 10.0f;
+                    LOGGER.info("[MustOpenPath] Triggered! Dealing {} damage directly", newDamage);
+                    event.setCanceled(true);
+                    attacker.teleportTo(defender.getX(), defender.getY(), defender.getZ());
+                    data.putInt(KEY_MUST_OPEN_PATH_CD, 100);
+                    // 使用setHealth直接扣除血量，避免hurt()的问题
+                    float newHealth = Math.max(0, defender.getHealth() - newDamage);
+                    defender.setHealth(newHealth);
+                    if (newHealth <= 0) {
+                        defender.kill();
+                    }
+                    return;
+                }
+            }
+
+            // === 3. 收割 Harvest: If target HP after damage <= threshold, instant kill ===
+            int harvestLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.HARVEST);
+            if (harvestLevel > 0) {
+                float remainingHp = defender.getHealth() - rawDamage;
+                float threshold = defender.getMaxHealth() * (0.1f * harvestLevel);
+                LOGGER.info("[Harvest] Pre-armor check: harvestLevel={}, defenderHP={}, rawDamage={}, remainingHp={}, threshold={}",
+                        harvestLevel, defender.getHealth(), rawDamage, remainingHp, threshold);
+                if (remainingHp > 0 && remainingHp <= threshold) {
+                    LOGGER.info("[Harvest] Triggered! Instant kill");
+                    event.setCanceled(true);
+                    defender.setHealth(0);
+                    defender.die(source);
+                    return;
+                }
             }
         }
 
@@ -319,6 +383,7 @@ public class ModEventHandlers {
             }
         }
 
+        LOGGER.info("[DamageEvent] Final amount={} (original={})", amount, event.getOriginalDamage());
         event.setNewDamage(amount);
     }
 
@@ -328,34 +393,7 @@ public class ModEventHandlers {
     private static float applyAttackerEnchantments(LivingEntity attacker, LivingEntity defender, DamageSource source, float amount, LivingDamageEvent.Pre event) {
         ItemStack mainHand = attacker.getMainHandItem();
 
-        // --- 1. 终结 Finale: If base attack damage >= 7, deal 100000x damage ---
-        int finaleLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.FINALE);
-        if (finaleLevel > 0) {
-            double attackDamage = attacker.getAttributeValue(Attributes.ATTACK_DAMAGE);
-            if (attackDamage >= 7.0) {
-                float originalDamage = amount;
-                amount *= 100000.0f;
-                // Reduce weapon durability by the original damage amount (before multiplier)
-                if (mainHand.isDamageableItem()) {
-                    int durabilityCost = (int) Math.min(originalDamage, mainHand.getMaxDamage() - mainHand.getDamageValue());
-                    if (durabilityCost > 0) {
-                        mainHand.hurtAndBreak(durabilityCost, attacker, EquipmentSlot.MAINHAND);
-                    }
-                }
-            }
-        }
-
-        // --- 3. 收割 Harvest: If target HP after damage <= threshold, instant kill ---
-        int harvestLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.HARVEST);
-        if (harvestLevel > 0) {
-            float remainingHp = defender.getHealth() - amount;
-            if (remainingHp > 0) {
-                float threshold = defender.getMaxHealth() * (0.1f * harvestLevel);
-                if (remainingHp <= threshold) {
-                    amount = defender.getHealth(); // Set damage to remaining health to kill
-                }
-            }
-        }
+        // NOTE: 终结(Finale)、必须开辟的通路(MustOpenPath)和收割(Harvest)已在LivingIncomingDamageEvent中处理
 
         // --- 4. 制裁 Sanction: Deal 1%/2%/3% of target's MAX HP as bonus damage ---
         int sanctionLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.SANCTION);
@@ -392,7 +430,10 @@ public class ModEventHandlers {
                 // Linear interpolation from 0.1 to 20 over 5s-400s
                 multiplier = 0.1f + (20.0f - 0.1f) * (float)((elapsedSeconds - 5.0) / (400.0 - 5.0));
             }
+            float beforeMult = amount;
             amount *= multiplier;
+            LOGGER.info("[Liberator] elapsed={}s, multiplier={}, amount={} -> {}",
+                    String.format("%.1f", elapsedSeconds), multiplier, beforeMult, amount);
             data.putLong(KEY_LIBERATOR_LAST_ATTACK, currentTick);
         }
 
@@ -587,19 +628,7 @@ public class ModEventHandlers {
             }
         }
 
-        // --- 32. 必须开辟的通路 Must Open Path: Mace 1000% damage, teleport ---
-        int mustOpenPathLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.MUST_OPEN_PATH);
-        if (mustOpenPathLevel > 0) {
-            CompoundTag data = getEntityData(attacker);
-            int cooldown = data.contains(KEY_MUST_OPEN_PATH_CD) ? data.getInt(KEY_MUST_OPEN_PATH_CD) : 0;
-            if (cooldown <= 0) {
-                amount *= 10.0f; // 1000% damage (10x)
-                // Teleport attacker to target location
-                attacker.teleportTo(defender.getX(), defender.getY(), defender.getZ());
-                // 5 second cooldown (100 ticks)
-                data.putInt(KEY_MUST_OPEN_PATH_CD, 100);
-            }
-        }
+        // NOTE: 必须开辟的通路(MustOpenPath)已在LivingIncomingDamageEvent中处理
 
         // --- 17. 重伤 Grievous Wound: Target receives 30% less healing for 5 seconds ---
         int grievousWoundLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.GRIEVOUS_WOUND);

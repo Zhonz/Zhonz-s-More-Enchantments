@@ -12,6 +12,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -176,12 +177,23 @@ public class ModTestCommands {
             attr.setBaseValue(8.0);
         }
 
+        // 验证假玩家装备
+        ItemStack mainHand = fakePlayer.getMainHandItem();
+        int enchantCheck = mainHand.getEnchantmentLevel(enchantHolder);
+        LOGGER.info("[TestCommand] FakePlayer mainHand: {} (enchant level: {}, expected: {})",
+                mainHand.getItem(), enchantCheck, level);
+
         float oldHealth = livingTarget.getHealth();
         livingTarget.invulnerableTime = 0;
         livingTarget.hurtTime = 0;
 
-        // 使用假玩家攻击目标
-        fakePlayer.attack(livingTarget);
+        // 直接使用 hurt() 方法造成伤害，以假玩家为伤害来源
+        // 这样可以确保附魔事件正常触发，同时绕过攻击冷却
+        DamageSource source = levelObj.damageSources().playerAttack(fakePlayer);
+        boolean hurtResult = livingTarget.hurt(source, 8.0f);
+
+        LOGGER.info("[TestCommand] Attack: enchant={} Lv{} -> target={} (source=playerAttack, baseDamage=8.0, hurtResult={})",
+                enchantId, level, livingTarget.getName().getString(), hurtResult);
 
         float newHealth = livingTarget.getHealth();
         float actualDamage = oldHealth - newHealth;

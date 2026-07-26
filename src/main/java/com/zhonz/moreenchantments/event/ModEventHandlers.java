@@ -1,5 +1,6 @@
 package com.zhonz.moreenchantments.event;
 
+import com.zhonz.moreenchantments.command.ModTestCommands;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ParticleTypes;
@@ -32,6 +33,7 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.AnvilUpdateEvent;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDropsEvent;
@@ -76,6 +78,12 @@ public class ModEventHandlers {
 
     public static void register() {
         NeoForge.EVENT_BUS.register(ModEventHandlers.class);
+        NeoForge.EVENT_BUS.register(ModTestCommands.class);
+    }
+
+    @SubscribeEvent
+    public static void onRegisterCommands(RegisterCommandsEvent event) {
+        ModTestCommands.register(event.getDispatcher());
     }
 
     // ===== Utility Methods =====

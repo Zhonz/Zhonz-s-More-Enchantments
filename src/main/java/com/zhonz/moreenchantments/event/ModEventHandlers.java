@@ -133,6 +133,17 @@ public class ModEventHandlers {
         return result;
     }
 
+    private static List<LivingEntity> getNearbySameTypeWithFishball(LivingEntity center, double radius) {
+        List<LivingEntity> sameType = getNearbySameType(center, radius);
+        List<LivingEntity> result = new ArrayList<>();
+        for (LivingEntity living : sameType) {
+            if (getEnchantmentLevel(living, ModEnchantments.FISHBALL) > 0) {
+                result.add(living);
+            }
+        }
+        return result;
+    }
+
     private static CompoundTag getEntityData(LivingEntity entity) {
         return EntityDataStorage.getEntityData(entity);
     }
@@ -205,11 +216,13 @@ public class ModEventHandlers {
         Entity attackerEntity = source.getEntity();
         float rawDamage = event.getAmount();
 
-        // === 18. 剥壳 Shell Strip: Record pre-armor damage for defender ===
-        int shellStripDefenderLevel = getEnchantmentLevel(defender, ModEnchantments.SHELL_STRIP);
-        if (shellStripDefenderLevel > 0) {
-            CompoundTag data = getEntityData(defender);
-            data.putFloat(KEY_SHELL_STRIP_RAW, rawDamage);
+        // === 18. 剥壳 Shell Strip: Record pre-armor damage if attacker has Shell Strip ===
+        if (attackerEntity instanceof LivingEntity attacker) {
+            int shellStripAttackerLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.SHELL_STRIP);
+            if (shellStripAttackerLevel > 0) {
+                CompoundTag defenderData = getEntityData(defender);
+                defenderData.putFloat(KEY_SHELL_STRIP_RAW, rawDamage);
+            }
         }
 
         // === 29. 倏忽恩赐 Fleeting Grace: Record unmitigated damage for defender ===
@@ -439,31 +452,26 @@ public class ModEventHandlers {
             amount *= (1.0f + damageBonus);
         }
 
-        // --- 18. 剥壳 Shell Strip: True damage from armor reduction ---
+        // --- 18. 剥壳 Shell Strip: True damage from armor reduction, percentage increases per hit ---
         int shellStripLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.SHELL_STRIP);
         if (shellStripLevel > 0) {
-            CompoundTag attackerData = getEntityData(attacker);
-            // Use the raw damage recorded from LivingHurtEvent on the defender
             CompoundTag defenderData = getEntityData(defender);
             if (defenderData.contains(KEY_SHELL_STRIP_RAW)) {
                 float rawDamage = defenderData.getFloat(KEY_SHELL_STRIP_RAW);
                 float reducedByArmor = rawDamage - amount;
                 if (reducedByArmor > 0) {
-                    // Deal 40% of the reduced damage as true damage
-                    float trueDamage = reducedByArmor * 0.4f;
-
-                    // Check for stacking cap (75% per hit on same target)
-                    String stackKey = "zhonz_shell_strip_stacks_" + attacker.getId();
-                    float currentStacks = defenderData.contains(stackKey) ? defenderData.getFloat(stackKey) : 0;
-                    float maxTrueDamage = rawDamage * 0.75f;
-                    if (currentStacks + trueDamage > maxTrueDamage) {
-                        trueDamage = Math.max(0, maxTrueDamage - currentStacks);
-                    }
-                    defenderData.putFloat(stackKey, currentStacks + trueDamage);
+                    // Stacking percentage: starts at 40%, increases by 5% per hit on same target, up to 75%
+                    String percentKey = "zhonz_shell_strip_percent_" + attacker.getId();
+                    float currentPercent = defenderData.contains(percentKey) ? defenderData.getFloat(percentKey) : 0.40f;
+                    float trueDamagePercent = Math.min(0.75f, currentPercent + 0.05f);
+                    float trueDamage = reducedByArmor * trueDamagePercent;
+                    defenderData.putFloat(percentKey, trueDamagePercent);
 
                     // Apply true damage (bypasses armor)
                     if (trueDamage > 0) {
                         defender.setHealth(Math.max(0, defender.getHealth() - trueDamage));
+                        LOGGER.info("[ShellStrip] {}% true damage: {} (reducedByArmor={}, percent={}%)",
+                                (int)(trueDamagePercent * 100), trueDamage, reducedByArmor, (int)(trueDamagePercent * 100));
                     }
                 }
                 defenderData.remove(KEY_SHELL_STRIP_RAW);
@@ -605,12 +613,21 @@ public class ModEventHandlers {
         // --- 5. 深海的供养 Deep Sea's Grace: Heal after taking damage ---
         int deepSeasGraceLevel = getEnchantmentLevel(defender, ModEnchantments.DEEP_SEAS_GRACE);
         if (deepSeasGraceLevel > 0) {
-            // Heal 5%/10%/20% of max HP after taking damage
-            // Since this event fires before damage is applied to health,
-            // we reduce the incoming damage by the heal amount (equivalent to taking damage then healing)
             float healRatio = deepSeasGraceLevel == 1 ? 0.05f : (deepSeasGraceLevel == 2 ? 0.10f : 0.20f);
             float healAmount = defender.getMaxHealth() * healRatio;
-            amount = Math.max(0, amount - healAmount);
+            // Apply full damage first, then heal after damage is applied
+            if (defender.level() instanceof ServerLevel serverLevel) {
+                serverLevel.getServer().tell(new net.minecraft.server.TickTask(
+                        serverLevel.getServer().getTickCount() + 1,
+                        () -> {
+                            if (defender.isAlive()) {
+                                defender.heal(healAmount);
+                            }
+                        }
+                ));
+            }
+            LOGGER.info("[DeepSeasGrace] Level {}: will heal {} = {}% max HP after damage",
+                    deepSeasGraceLevel, healAmount, (int) (healRatio * 100));
         }
 
         // --- 6. 宝石伞 Gem Umbrella: Knock attacker back 10 blocks, drop random minerals ---
@@ -640,21 +657,29 @@ public class ModEventHandlers {
             }
         }
 
-        // --- 8. 鱼丸 Fishball: Transfer damage from nearby same-type entities ---
-        int fishballLevel = getEnchantmentLevel(defender, ModEnchantments.FISHBALL);
-        if (fishballLevel > 0) {
-            // Find nearby same-type entities without Fishball
-            List<LivingEntity> sameType = getNearbySameType(defender, 10.0);
-            for (LivingEntity nearby : sameType) {
-                int nearbyFishball = getEnchantmentLevel(nearby, ModEnchantments.FISHBALL);
-                if (nearbyFishball <= 0) {
-                    // Transfer a portion of the damage to this entity
+        // --- 8. 鱼丸 Fishball: Transfer damage from nearby same-type entities to the wearer ---
+        // Note: This is handled in onLivingDamagePre by checking if the defender has Fishball.
+        // The actual logic of transferring damage FROM others TO the wearer requires a global check.
+        // For simplicity, we implement it as: when a same-type entity nearby takes damage,
+        // a portion of that damage is redirected to the Fishball wearer.
+        // This is handled in the main onLivingDamagePre method below.
+        {
+            int fishballLevel = getEnchantmentLevel(defender, ModEnchantments.FISHBALL);
+            if (fishballLevel == 0) {
+                // Defender does NOT have Fishball - check if there's a Fishball wearer nearby to transfer damage TO
+                List<LivingEntity> nearbyFishballWearers = getNearbySameTypeWithFishball(defender, 10.0);
+                if (!nearbyFishballWearers.isEmpty()) {
+                    LivingEntity fishballWearer = nearbyFishballWearers.get(0);
+                    // Transfer 30% of damage to the fishball wearer
                     float transferDamage = amount * 0.3f;
-                    nearby.hurt(source, transferDamage);
+                    fishballWearer.hurt(source, transferDamage);
+                    // Reduce the original damage by the transferred amount
+                    amount -= transferDamage;
+                    LOGGER.info("[Fishball] Transferred {} damage from {} to fishball wearer {}",
+                            transferDamage, defender.getName().getString(), fishballWearer.getName().getString());
                 }
             }
-            // Note: 10x durability and protecting other items' durability requires Mixin support
-            // on ItemStack.damageItem() or similar.
+            // If defender HAS Fishball, don't transfer its damage to others
         }
 
         // --- 13. 坚韧 Toughness: When shield broken, gain temporary armor/toughness ---

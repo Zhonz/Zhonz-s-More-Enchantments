@@ -14,7 +14,8 @@
         "ProjectileWeaponCooldownMixin",
         "PlayerShieldBlockMixin",
         "PlayerFoodEffectMixin",
-        "DivineCurseBlockBreakMixin"
+        "DivineCurseBlockBreakMixin",
+        "ThePureEffectMixin"
     ],
     "injectors": {
         "defaultRequire": 1

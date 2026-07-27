@@ -753,33 +753,33 @@ public class ModEventHandlers {
         LivingEntity entity = event.getEntity();
         if (entity.level().isClientSide()) return;
 
-        if (entity instanceof Player player && tryReturnFromHell(player, event)) {
+        if (tryReturnFromHell(entity, event)) {
             return;
         }
         tryDivineProtection(entity, event);
     }
 
-    private static boolean tryReturnFromHell(Player player, LivingDeathEvent event) {
-        int returnFromHellLevel = getEnchantmentLevel(player, ModEnchantments.RETURN_FROM_HELL);
+    private static boolean tryReturnFromHell(LivingEntity entity, LivingDeathEvent event) {
+        int returnFromHellLevel = getEnchantmentLevel(entity, ModEnchantments.RETURN_FROM_HELL);
         if (returnFromHellLevel <= 0) return false;
 
-        CompoundTag data = player.getPersistentData();
+        CompoundTag data = getEntityData(entity);
         if (data.getInt(KEY_RETURN_FROM_HELL_CD) > 0) return false;
 
         event.setCanceled(true);
-        player.setHealth(player.getMaxHealth());
-        player.removeAllEffects();
-        player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 300, 0));
-        player.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 300, 1));
+        entity.setHealth(entity.getMaxHealth());
+        entity.removeAllEffects();
+        entity.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 300, 0));
+        entity.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 300, 1));
 
-        ItemStack boots = player.getItemBySlot(EquipmentSlot.FEET);
+        ItemStack boots = entity.getItemBySlot(EquipmentSlot.FEET);
         if (!boots.isEmpty() && boots.isDamageableItem()) {
             int newDamage = boots.getDamageValue() + (boots.getMaxDamage() - boots.getDamageValue()) / 2;
             boots.setDamageValue(newDamage);
         }
         data.putInt(KEY_RETURN_FROM_HELL_CD, 6000); // 5 minutes
-        if (player.level() instanceof ServerLevel serverLevel) {
-            serverLevel.playSound(null, player.getX(), player.getY(), player.getZ(),
+        if (entity.level() instanceof ServerLevel serverLevel) {
+            serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
                     SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 0.8f);
         }
         return true;

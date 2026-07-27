@@ -28,3 +28,10 @@ config="${mod_id}.mixins.json"
     versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="enchdesc"
+    type="optional"
+    versionRange="[1,)"
+    ordering="NONE"
+    side="CLIENT"

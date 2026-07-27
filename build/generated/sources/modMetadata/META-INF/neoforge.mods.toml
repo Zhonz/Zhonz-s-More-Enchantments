@@ -28,3 +28,10 @@ config="zhonz_more_enchantments.mixins.json"
     versionRange="[1.21.1]"
     ordering="NONE"
     side="BOTH"
+
+[[dependencies.zhonz_more_enchantments]]
+    modId="enchdesc"
+    type="optional"
+    versionRange="[1,)"
+    ordering="NONE"
+    side="CLIENT"

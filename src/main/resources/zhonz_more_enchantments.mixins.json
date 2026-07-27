@@ -7,7 +7,17 @@
     "mixins": [
         "AnvilMenuMixin",
         "LivingEntityHealMixin",
-        "MaceItemMixin"
+        "MaceItemMixin",
+        "ItemStackDurabilityMixin",
+        "BlockBreakMixin",
+        "CrossbowChargeMixin",
+        "BowChargeMixin",
+        "TridentChargeMixin",
+        "ProjectileWeaponCooldownMixin",
+        "PlayerAttackMixin",
+        "PlayerShieldBlockMixin",
+        "PlayerFoodEffectMixin",
+        "DivineCurseBlockBreakMixin"
     ],
     "injectors": {
         "defaultRequire": 1

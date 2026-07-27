@@ -2,7 +2,7 @@
   "description": {
     "translate": "enchantment.zhonz_more_enchantments.charger"
   },
-  "supported_items": "#minecraft:enchantable/sword",
+  "supported_items": "#zhonz_more_enchantments:enchantable/melee_weapon",
   "weight": 10,
   "max_level": 1,
   "min_cost": {

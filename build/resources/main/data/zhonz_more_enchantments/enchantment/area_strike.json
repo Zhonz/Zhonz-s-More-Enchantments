@@ -2,7 +2,7 @@
   "description": {
     "translate": "enchantment.zhonz_more_enchantments.area_strike"
   },
-  "supported_items": "#minecraft:enchantable/bow",
+  "supported_items": "#zhonz_more_enchantments:enchantable/ranged_weapon",
   "weight": 2,
   "max_level": 3,
   "min_cost": {

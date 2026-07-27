@@ -2,7 +2,7 @@
   "description": {
     "translate": "enchantment.zhonz_more_enchantments.blood_weep"
   },
-  "supported_items": "#minecraft:enchantable/sword",
+  "supported_items": "#zhonz_more_enchantments:enchantable/melee_weapon",
   "weight": 2,
   "max_level": 3,
   "min_cost": {

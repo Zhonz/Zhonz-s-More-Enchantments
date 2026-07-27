@@ -2,7 +2,7 @@
   "description": {
     "translate": "enchantment.zhonz_more_enchantments.hang"
   },
-  "supported_items": "#minecraft:enchantable/weapon",
+  "supported_items": "#minecraft:enchantable/durability",
   "weight": 1,
   "max_level": 1,
   "min_cost": {

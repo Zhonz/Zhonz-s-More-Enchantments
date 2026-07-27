@@ -2,7 +2,7 @@
   "description": {
     "translate": "enchantment.zhonz_more_enchantments.sanction"
   },
-  "supported_items": "#minecraft:enchantable/weapon",
+  "supported_items": "#zhonz_more_enchantments:enchantable/all_weapon",
   "weight": 2,
   "max_level": 3,
   "min_cost": {

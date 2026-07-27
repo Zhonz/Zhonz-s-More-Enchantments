@@ -2,7 +2,7 @@
   "description": {
     "translate": "enchantment.zhonz_more_enchantments.self_doubt"
   },
-  "supported_items": "#minecraft:enchantable/weapon",
+  "supported_items": "#zhonz_more_enchantments:enchantable/all_weapon",
   "weight": 2,
   "max_level": 1,
   "min_cost": {

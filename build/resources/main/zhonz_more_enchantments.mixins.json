@@ -5,7 +5,9 @@
     "compatibilityLevel": "JAVA_21",
     "refmap": "zhonz_more_enchantments.refmap.json",
     "mixins": [
-        "AnvilMenuMixin"
+        "AnvilMenuMixin",
+        "LivingEntityHealMixin",
+        "MaceItemMixin"
     ],
     "injectors": {
         "defaultRequire": 1

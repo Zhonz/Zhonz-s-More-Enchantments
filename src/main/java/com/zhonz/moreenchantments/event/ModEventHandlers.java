@@ -80,6 +80,8 @@ public class ModEventHandlers {
     private static final ResourceLocation TOUGHNESS_TOUGHNESS_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "toughness_toughness");
     private static final ResourceLocation FLIPPING_COIN_MAX_HP = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "flipping_coin_max_hp");
     private static final ResourceLocation FLIPPING_COIN_TARGET_MAX_HP = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "flipping_coin_target_max_hp");
+    private static final ResourceLocation DIVINE_CURSE_RANGE_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "divine_curse_range");
+    private static final ResourceLocation DIVINE_CURSE_BLOCK_RANGE_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "divine_curse_block_range");
 
     // ===== Registration =====
 
@@ -693,6 +695,23 @@ public class ModEventHandlers {
             }
         }
 
+        // --- 27. 挂 Hang: 攻击造成真实伤害(补偿护甲减免) ---
+        if (attacker instanceof Player p && hasEnchantmentInInventory(p, ModEnchantments.HANG)) {
+            // 获取防御方护甲值与韧性,补偿护甲减免让伤害接近真实伤害
+            double armorValue = defender.getAttributeValue(Attributes.ARMOR);
+            double toughnessValue = defender.getAttributeValue(Attributes.ARMOR_TOUGHNESS);
+            // 防御方护甲百分比减免 (封顶80%)
+            float reductionPercent = (float) (Math.min(0.8, armorValue / (armorValue + 8.0)) * Math.max(0, 1.0 - toughnessValue / 16.0));
+            if (reductionPercent > 0.01f) {
+                // 补偿被减免的伤害部分
+                float bonusDamage = amount * reductionPercent / (1.0f - reductionPercent);
+                amount += bonusDamage;
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("[Hang] 真实伤害补偿: 减免{}%, 额外伤害 {}", (int)(reductionPercent*100), bonusDamage);
+                }
+            }
+        }
+
         // NOTE: 必须开辟的通路(MustOpenPath)已在LivingIncomingDamageEvent中处理
 
         // --- 17. 重伤 Grievous Wound: Target receives 30% less healing for 5 seconds ---
@@ -877,6 +896,19 @@ public class ModEventHandlers {
                 }
                 return;
             }
+
+            // --- 31. 翻飞之币 Flipping Coin: Clear all max HP modifiers and stacks on death ---
+            CompoundTag playerData = getEntityData(player);
+            if (playerData.contains(KEY_FLIPPING_COIN_ATTACK_STACKS)) {
+                playerData.remove(KEY_FLIPPING_COIN_ATTACK_STACKS);
+                // 移除生命上限修改器
+                var maxHp = player.getAttribute(Attributes.MAX_HEALTH);
+                if (maxHp != null) {
+                    maxHp.removeModifier(FLIPPING_COIN_MAX_HP);
+                }
+                // 移除所有永久力量buff(此mod添加的)
+                player.removeEffect(MobEffects.DAMAGE_BOOST);
+            }
         }
 
         // --- 30. 神护 Divine Protection: Totem effect on fatal damage, remove 25% durability ---
@@ -1031,14 +1063,18 @@ public class ModEventHandlers {
             // Make nearby hostile entities glow and take 170% more damage
             double detectRange = 20.0 + prophetsCallLevel * 10.0;
             AABB box = player.getBoundingBox().inflate(detectRange);
+            // 检测所有能够攻击玩家的敌对生物(不限于已选中玩家的目标)
             List<Monster> hostiles = player.level().getEntitiesOfClass(Monster.class, box,
-                    mob -> mob.isAlive() && mob.getTarget() == player);
+                    mob -> mob.isAlive() && !mob.hasEffect(MobEffects.GLOWING));
             if (!hostiles.isEmpty()) {
                 for (Monster hostile : hostiles) {
-                    hostile.addEffect(new MobEffectInstance(MobEffects.GLOWING, 80, 0));
-                    CompoundTag hostileData = getEntityData(hostile);
-                    hostileData.putBoolean(KEY_PROPHETS_CALL_ACTIVE, true);
-                    hostileData.putLong(KEY_PROPHETS_CALL_UNTIL, player.level().getGameTime() + 80);
+                    // 只对真正的敌对生物生效(可以攻击玩家)
+                    if (hostile.canAttack(player)) {
+                        hostile.addEffect(new MobEffectInstance(MobEffects.GLOWING, 80, 0));
+                        CompoundTag hostileData = getEntityData(hostile);
+                        hostileData.putBoolean(KEY_PROPHETS_CALL_ACTIVE, true);
+                        hostileData.putLong(KEY_PROPHETS_CALL_UNTIL, player.level().getGameTime() + 80);
+                    }
                 }
                 if (tickCount % 40 == 0) {
                     player.displayClientMessage(
@@ -1107,7 +1143,7 @@ public class ModEventHandlers {
         // --- 8. 鱼丸 Fishball: Durability regeneration (10x effective durability) + absorption ---
         int fishballLevel = getEnchantmentLevel(player, ModEnchantments.FISHBALL);
         if (fishballLevel > 0) {
-            // Every 2 seconds, regen Fishball item durability
+            // 每2秒回复鱼丸物品耐久(等效10x耐久)
             if (tickCount % 40 == 0) {
                 for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.CHEST, EquipmentSlot.OFFHAND}) {
                     ItemStack fishballStack = player.getItemBySlot(slot);
@@ -1131,6 +1167,52 @@ public class ModEventHandlers {
                     }
                 }
             }
+
+            // 鱼丸耐久吸收: 抵消装备者其他物品的耐久消耗
+            // 通过追踪每个槽位的耐久值变化,如果物品耐久增加,让鱼丸消耗等量耐久来抵消
+            CompoundTag fishballData = getEntityData(player);
+
+            // 找到鱼丸物品及其槽位
+            ItemStack fishballStack = null;
+            EquipmentSlot fishballSlot = null;
+            for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.CHEST, EquipmentSlot.OFFHAND}) {
+                ItemStack stack = player.getItemBySlot(slot);
+                if (stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.FISHBALL)) > 0
+                        && stack.isDamageableItem()) {
+                    fishballStack = stack;
+                    fishballSlot = slot;
+                    break;
+                }
+            }
+
+            if (fishballStack != null) {
+                for (EquipmentSlot slot : EquipmentSlot.values()) {
+                    if (slot == fishballSlot) continue;
+                    ItemStack stack = player.getItemBySlot(slot);
+                    if (stack.isEmpty() || !stack.isDamageableItem()) continue;
+
+                    String key = "zhonz_fishball_last_damage_" + slot.getName();
+                    int currentDamage = stack.getDamageValue();
+                    int lastDamage = fishballData.contains(key) ? fishballData.getInt(key) : currentDamage;
+                    fishballData.putInt(key, currentDamage);
+
+                    if (currentDamage > lastDamage) {
+                        // 物品耐久增加,需要鱼丸吸收
+                        int damageIncrease = currentDamage - lastDamage;
+                        int fishballRemaining = fishballStack.getMaxDamage() - fishballStack.getDamageValue();
+                        int absorb = Math.min(damageIncrease, fishballRemaining);
+                        if (absorb > 0) {
+                            // 物品恢复耐久,鱼丸消耗耐久
+                            stack.setDamageValue(currentDamage - absorb);
+                            fishballStack.setDamageValue(fishballStack.getDamageValue() + absorb);
+                            if (LOGGER.isDebugEnabled()) {
+                                LOGGER.debug("[Fishball] 吸收{}点耐久消耗, 物品从{}恢复, 鱼丸消耗到{}",
+                                        absorb, currentDamage - absorb, fishballStack.getDamageValue());
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // --- 28. 神咒 Divine Curse: Durability decreases 1% per second, halve attributes ---
@@ -1146,14 +1228,56 @@ public class ModEventHandlers {
                     }
                 }
             }
-            // Halve attack damage (Weakness effect as approximation)
+            // 攻击伤害减半 (Weakness as approximation)
             player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 40, 3, false, false));
-            // Halve mining speed (Mining Fatigue)
+            // 挖掘速度减半 (Mining Fatigue)
             player.addEffect(new MobEffectInstance(MobEffects.DIG_SLOWDOWN, 40, 3, false, false));
-            // Halve movement speed
+            // 移动速度略微减慢(对应触摸范围减半的副作用)
             player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 40, 0, false, false));
-            // Note: Precise halving of attack speed, mining speed, reach, damage, block hardness,
-            // and doubling of charge speed/cooldown requires Mixin support with attribute modifiers.
+
+            // 触摸范围减半 (Entity Interaction Range)
+            var entityRange = player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE);
+            if (entityRange != null) {
+                entityRange.removeModifier(DIVINE_CURSE_RANGE_MODIFIER);
+                entityRange.addTransientModifier(new AttributeModifier(
+                        DIVINE_CURSE_RANGE_MODIFIER, -0.5, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+                ));
+            }
+            // 方块交互范围减半
+            var blockRange = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
+            if (blockRange != null) {
+                blockRange.removeModifier(DIVINE_CURSE_BLOCK_RANGE_MODIFIER);
+                blockRange.addTransientModifier(new AttributeModifier(
+                        DIVINE_CURSE_BLOCK_RANGE_MODIFIER, -0.5, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+                ));
+            }
+            // 攻击伤害属性减半
+            var attackDamage = player.getAttribute(Attributes.ATTACK_DAMAGE);
+            if (attackDamage != null) {
+                attackDamage.removeModifier(DIVINE_CURSE_DAMAGE_MODIFIER);
+                attackDamage.addTransientModifier(new AttributeModifier(
+                        DIVINE_CURSE_DAMAGE_MODIFIER, -0.5, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+                ));
+            }
+            // 攻击速度减半
+            var attackSpeed = player.getAttribute(Attributes.ATTACK_SPEED);
+            if (attackSpeed != null) {
+                attackSpeed.removeModifier(DIVINE_CURSE_ATTACK_SPEED_MODIFIER);
+                attackSpeed.addTransientModifier(new AttributeModifier(
+                        DIVINE_CURSE_ATTACK_SPEED_MODIFIER, -0.5, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+                ));
+            }
+            // Note: 蓄力速度、冷却时间、可破坏方块硬度 requires Mixin support
+        } else {
+            // 没有神咒时,清理属性修饰符
+            var entityRange = player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE);
+            if (entityRange != null) entityRange.removeModifier(DIVINE_CURSE_RANGE_MODIFIER);
+            var blockRange = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
+            if (blockRange != null) blockRange.removeModifier(DIVINE_CURSE_BLOCK_RANGE_MODIFIER);
+            var attackDamage = player.getAttribute(Attributes.ATTACK_DAMAGE);
+            if (attackDamage != null) attackDamage.removeModifier(DIVINE_CURSE_DAMAGE_MODIFIER);
+            var attackSpeed = player.getAttribute(Attributes.ATTACK_SPEED);
+            if (attackSpeed != null) attackSpeed.removeModifier(DIVINE_CURSE_ATTACK_SPEED_MODIFIER);
         }
 
         // --- 25. 爆裂黎明 Explosive Dawn: Invincibility during crossbow reload ---

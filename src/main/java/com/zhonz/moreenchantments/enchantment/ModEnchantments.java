@@ -26,11 +26,26 @@ public class ModEnchantments {
     /**
      * Resolves the runtime {@link Holder} for an enchantment from the server
      * registry. Must be called server-side (e.g. inside event handlers).
+     *
+     * @throws IllegalStateException if the enchantment is not registered
      */
     public static Holder<Enchantment> getHolder(ResourceKey<Enchantment> key) {
         return ServerLifecycleHooks.getCurrentServer().registryAccess()
                 .registryOrThrow(Registries.ENCHANTMENT)
                 .getHolderOrThrow(key);
+    }
+
+    /**
+     * Resolves the runtime {@link Holder} for an enchantment, returning
+     * {@code null} if the enchantment is not registered. Useful for user-facing
+     * input validation where a friendly error message is preferred over an
+     * exception.
+     */
+    public static Holder<Enchantment> getHolderOrNull(ResourceKey<Enchantment> key) {
+        return ServerLifecycleHooks.getCurrentServer().registryAccess()
+                .registryOrThrow(Registries.ENCHANTMENT)
+                .getHolder(key)
+                .orElse(null);
     }
 
     // ===== Enchantment Resource Keys =====

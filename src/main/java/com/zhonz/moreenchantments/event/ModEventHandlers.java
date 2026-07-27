@@ -67,6 +67,7 @@ public class ModEventHandlers {
     private static final String KEY_EXPLOSIVE_DAWN_RELOADING = "zhonz_explosive_dawn_reloading";
     private static final String KEY_PROPHETS_CALL_ACTIVE = "zhonz_prophets_call_active";
     private static final String KEY_PROPHETS_CALL_UNTIL = "zhonz_prophets_call_until";
+    private static final String KEY_SUPREME_ART_LAST_LEVEL = "zhonz_supreme_art_last_level";
 
     // ===== Attribute Modifier ResourceLocations =====
     private static final ResourceLocation SUPREME_ART_RANGE_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "supreme_art_range");
@@ -168,28 +169,22 @@ public class ModEventHandlers {
                 || entity.getType() == EntityType.RAVAGER;
     }
 
-    private static void removeDebuffs(LivingEntity entity) {
-        List<Holder<net.minecraft.world.effect.MobEffect>> toRemove = new ArrayList<>();
-        for (MobEffectInstance effect : entity.getActiveEffects()) {
-            if (!effect.getEffect().value().isBeneficial()) {
-                toRemove.add(effect.getEffect());
+    private static void removeEffects(LivingEntity entity, boolean beneficial) {
+        // Use iterator to avoid intermediate list allocation
+        for (var it = entity.getActiveEffects().iterator(); it.hasNext(); ) {
+            MobEffectInstance effect = it.next();
+            if (effect.getEffect().value().isBeneficial() == beneficial) {
+                entity.removeEffect(effect.getEffect());
             }
-        }
-        for (Holder<net.minecraft.world.effect.MobEffect> effect : toRemove) {
-            entity.removeEffect(effect);
         }
     }
 
+    private static void removeDebuffs(LivingEntity entity) {
+        removeEffects(entity, false);
+    }
+
     private static void removeBeneficialEffects(LivingEntity entity) {
-        List<Holder<net.minecraft.world.effect.MobEffect>> toRemove = new ArrayList<>();
-        for (MobEffectInstance effect : entity.getActiveEffects()) {
-            if (effect.getEffect().value().isBeneficial()) {
-                toRemove.add(effect.getEffect());
-            }
-        }
-        for (Holder<net.minecraft.world.effect.MobEffect> effect : toRemove) {
-            entity.removeEffect(effect);
-        }
+        removeEffects(entity, true);
     }
 
     private static boolean isMeleeWeapon(ItemStack stack) {
@@ -246,7 +241,7 @@ public class ModEventHandlers {
             if (finaleLevel > 0) {
                 double attackDamage = attacker.getAttributeValue(Attributes.ATTACK_DAMAGE);
                 if (attackDamage >= 7.0) {
-                    LOGGER.info("[Finale] Triggered! Instant kill (100000x damage)");
+                    LOGGER.debug("[Finale] Triggered! Instant kill (100000x damage)");
                     event.setCanceled(true);
                     // Reduce weapon durability
                     ItemStack mainHand = attacker.getMainHandItem();
@@ -270,7 +265,7 @@ public class ModEventHandlers {
                 int cooldown = data.contains(KEY_MUST_OPEN_PATH_CD) ? data.getInt(KEY_MUST_OPEN_PATH_CD) : 0;
                 if (cooldown <= 0) {
                     float newDamage = rawDamage * 10.0f;
-                    LOGGER.info("[MustOpenPath] Triggered! Dealing {} damage directly", newDamage);
+                    LOGGER.debug("[MustOpenPath] Triggered! Dealing {} damage directly", newDamage);
                     event.setCanceled(true);
                     attacker.teleportTo(defender.getX(), defender.getY(), defender.getZ());
                     data.putInt(KEY_MUST_OPEN_PATH_CD, 100);
@@ -289,10 +284,12 @@ public class ModEventHandlers {
             if (harvestLevel > 0) {
                 float remainingHp = defender.getHealth() - rawDamage;
                 float threshold = defender.getMaxHealth() * (0.1f * harvestLevel);
-                LOGGER.info("[Harvest] Pre-armor check: harvestLevel={}, defenderHP={}, rawDamage={}, remainingHp={}, threshold={}",
-                        harvestLevel, defender.getHealth(), rawDamage, remainingHp, threshold);
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("[Harvest] Pre-armor check: harvestLevel={}, defenderHP={}, rawDamage={}, remainingHp={}, threshold={}",
+                            harvestLevel, defender.getHealth(), rawDamage, remainingHp, threshold);
+                }
                 if (remainingHp > 0 && remainingHp <= threshold) {
-                    LOGGER.info("[Harvest] Triggered! Instant kill");
+                    LOGGER.debug("[Harvest] Triggered! Instant kill");
                     event.setCanceled(true);
                     defender.setHealth(0);
                     defender.die(source);
@@ -336,18 +333,18 @@ public class ModEventHandlers {
                 long startTick = targetData.getLong(KEY_MY_SEA_DOMAIN_START);
                 long currentTick = defender.level().getGameTime();
                 long elapsed = currentTick - startTick;
-                float vulnerability;
-                if (elapsed < 200) { // 0-10s: 30% more damage
-                    vulnerability = 0.30f;
-                } else if (elapsed < 600) { // 10-30s: increasing from 30% to 60%
-                    vulnerability = 0.30f + 0.30f * ((float)(elapsed - 200) / 400f);
-                } else { // 30s+: 60% more damage
-                    vulnerability = 0.60f;
-                }
                 // Expire after 60 seconds
                 if (elapsed > 1200) {
                     targetData.remove(KEY_MY_SEA_DOMAIN_START);
                 } else {
+                    float vulnerability;
+                    if (elapsed < 200) { // 0-10s: 30% more damage
+                        vulnerability = 0.30f;
+                    } else if (elapsed < 600) { // 10-30s: increasing from 30% to 60%
+                        vulnerability = 0.30f + 0.30f * ((float)(elapsed - 200) / 400f);
+                    } else { // 30s+: 60% more damage
+                        vulnerability = 0.60f;
+                    }
                     amount *= (1.0f + vulnerability);
                 }
             }
@@ -383,7 +380,9 @@ public class ModEventHandlers {
             }
         }
 
-        LOGGER.info("[DamageEvent] Final amount={} (original={})", amount, event.getOriginalDamage());
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[DamageEvent] Final amount={} (original={})", amount, event.getOriginalDamage());
+        }
         event.setNewDamage(amount);
     }
 
@@ -432,8 +431,10 @@ public class ModEventHandlers {
             }
             float beforeMult = amount;
             amount *= multiplier;
-            LOGGER.info("[Liberator] elapsed={}s, multiplier={}, amount={} -> {}",
-                    String.format("%.1f", elapsedSeconds), multiplier, beforeMult, amount);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("[Liberator] elapsed={}s, multiplier={}, amount={} -> {}",
+                        String.format("%.1f", elapsedSeconds), multiplier, beforeMult, amount);
+            }
             data.putLong(KEY_LIBERATOR_LAST_ATTACK, currentTick);
         }
 
@@ -523,8 +524,10 @@ public class ModEventHandlers {
                     // Apply true damage (bypasses armor)
                     if (trueDamage > 0) {
                         defender.setHealth(Math.max(0, defender.getHealth() - trueDamage));
-                        LOGGER.info("[ShellStrip] {}% true damage: {} (reducedByArmor={}, percent={}%)",
-                                (int)(trueDamagePercent * 100), trueDamage, reducedByArmor, (int)(trueDamagePercent * 100));
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug("[ShellStrip] {}% true damage: {} (reducedByArmor={}, percent={}%)",
+                                    (int)(trueDamagePercent * 100), trueDamage, reducedByArmor, (int)(trueDamagePercent * 100));
+                        }
                     }
                 }
                 defenderData.remove(KEY_SHELL_STRIP_RAW);
@@ -664,8 +667,6 @@ public class ModEventHandlers {
                     }
                 }));
             }
-            LOGGER.info("[DeepSeasGrace] Level {}: will heal {} = {}% max HP on next tick",
-                    deepSeasGraceLevel, healAmount, (int) (healRatio * 100));
         }
 
         // --- 6. 宝石伞 Gem Umbrella: Knock attacker back 10 blocks, drop random minerals ---
@@ -711,8 +712,10 @@ public class ModEventHandlers {
                     fishballWearer.hurt(source, transferDamage);
                     // Reduce the original damage by the transferred amount
                     amount -= transferDamage;
-                    LOGGER.info("[Fishball] Transferred {} damage from {} to fishball wearer {}",
-                            transferDamage, defender.getName().getString(), fishballWearer.getName().getString());
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug("[Fishball] Transferred {} damage from {} to fishball wearer {}",
+                                transferDamage, defender.getName().getString(), fishballWearer.getName().getString());
+                    }
                 }
             }
             // If defender HAS Fishball, don't transfer its damage to others
@@ -870,8 +873,12 @@ public class ModEventHandlers {
         }
 
         // --- 10. 至高之术 Supreme Art: Range and attack speed attribute modifiers ---
+        // Only update attribute modifiers when the level changes (avoids per-tick remove+add overhead)
         int supremeArtLevel = getEnchantmentLevel(player, ModEnchantments.SUPREME_ART);
-        {
+        int lastSupremeArtLevel = data.contains(KEY_SUPREME_ART_LAST_LEVEL) ? data.getInt(KEY_SUPREME_ART_LAST_LEVEL) : -1;
+        if (supremeArtLevel != lastSupremeArtLevel) {
+            data.putInt(KEY_SUPREME_ART_LAST_LEVEL, supremeArtLevel);
+
             var entityRangeAttr = player.getAttribute(Attributes.ENTITY_INTERACTION_RANGE);
             if (entityRangeAttr != null) {
                 entityRangeAttr.removeModifier(SUPREME_ART_RANGE_MODIFIER);
@@ -1066,63 +1073,37 @@ public class ModEventHandlers {
         }
 
         // ===== Cooldown Management =====
-
-        // Emergency Rescue cooldown
-        {
-            int erCd = data.contains(KEY_EMERGENCY_RESCUE_CD) ? data.getInt(KEY_EMERGENCY_RESCUE_CD) : 0;
-            if (erCd > 0) {
-                data.putInt(KEY_EMERGENCY_RESCUE_CD, erCd - 1);
-            }
-        }
-
-        // Return from Hell cooldown
-        {
-            int rfhCd = data.contains(KEY_RETURN_FROM_HELL_CD) ? data.getInt(KEY_RETURN_FROM_HELL_CD) : 0;
-            if (rfhCd > 0) {
-                data.putInt(KEY_RETURN_FROM_HELL_CD, rfhCd - 1);
-            }
-        }
-
-        // Must Open Path cooldown
-        {
-            int mopCd = data.contains(KEY_MUST_OPEN_PATH_CD) ? data.getInt(KEY_MUST_OPEN_PATH_CD) : 0;
-            if (mopCd > 0) {
-                data.putInt(KEY_MUST_OPEN_PATH_CD, mopCd - 1);
-            }
-        }
+        tickCooldown(data, KEY_EMERGENCY_RESCUE_CD);
+        tickCooldown(data, KEY_RETURN_FROM_HELL_CD);
+        tickCooldown(data, KEY_MUST_OPEN_PATH_CD);
 
         // ===== Liberator: Update last attack time for non-attack tracking =====
         // (The last attack time is updated in LivingDamageEvent when the player attacks)
 
         // ===== Healing Reduction for Grievous Wound =====
-        // Check if player has active Grievous Wound healing reduction
+        // Expire the healing reduction flag when the timer runs out.
+        // Note: Actual healing reduction requires a Mixin on LivingEntity.heal().
         {
             CompoundTag playerEntityData = getEntityData(player);
             if (playerEntityData.contains(KEY_GRIEVOUS_WOUND_UNTIL)) {
                 long until = playerEntityData.getLong(KEY_GRIEVOUS_WOUND_UNTIL);
                 if (player.level().getGameTime() >= until) {
                     playerEntityData.remove(KEY_GRIEVOUS_WOUND_UNTIL);
-                } else {
-                    // Reduce healing by 30% - check if player was recently healed
-                    // Note: Full implementation requires a Mixin on LivingEntity.heal()
-                    // to intercept and reduce healing by 30%.
                 }
             }
         }
 
         // ===== Prophet's Call Damage Bonus =====
-        // Check if player is attacking an entity with Prophet's Call active
         // (Handled in LivingDamageEvent by checking KEY_PROPHETS_CALL_ACTIVE on the defender)
 
         // ===== Emergency Rescue: Tick-based HP check =====
         {
             int erLevel = getEnchantmentLevel(player, ModEnchantments.EMERGENCY_RESCUE);
             if (erLevel > 0 && player.getHealth() <= 5.0f) {
-                int erCd = data.contains(KEY_EMERGENCY_RESCUE_CD) ? data.getInt(KEY_EMERGENCY_RESCUE_CD) : 0;
+                int erCd = data.getInt(KEY_EMERGENCY_RESCUE_CD);
                 if (erCd <= 0) {
                     player.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 60, 2));
-                    List<LivingEntity> nearbySameType = getNearbySameType(player, 10.0);
-                    for (LivingEntity nearby : nearbySameType) {
+                    for (LivingEntity nearby : getNearbySameType(player, 10.0)) {
                         nearby.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 60, 2));
                     }
                     data.putInt(KEY_EMERGENCY_RESCUE_CD, 200);
@@ -1130,17 +1111,24 @@ public class ModEventHandlers {
             }
         }
 
-        // ===== Shell Strip: Reset stacking on new tick cycle =====
-        {
+        // ===== Shell Strip: Periodically clean up stale per-attacker stacking data =====
+        if (tickCount % 100 == 0) {
             CompoundTag playerEntityData = getEntityData(player);
-            // Clean up old stack data periodically
-            if (tickCount % 100 == 0) {
-                for (String key : new ArrayList<>(playerEntityData.getAllKeys())) {
-                    if (key.startsWith("zhonz_shell_strip_stacks_")) {
-                        playerEntityData.remove(key);
-                    }
+            for (String key : new ArrayList<>(playerEntityData.getAllKeys())) {
+                if (key.startsWith("zhonz_shell_strip_percent_")) {
+                    playerEntityData.remove(key);
                 }
             }
+        }
+    }
+
+    /**
+     * Decrement a cooldown counter stored in CompoundTag if it's positive.
+     */
+    private static void tickCooldown(CompoundTag data, String key) {
+        int cd = data.contains(key) ? data.getInt(key) : 0;
+        if (cd > 0) {
+            data.putInt(key, cd - 1);
         }
     }
 

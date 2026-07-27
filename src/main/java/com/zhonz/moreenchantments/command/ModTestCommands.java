@@ -8,7 +8,6 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
 import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -123,6 +122,53 @@ public class ModTestCommands {
         register(event.getDispatcher());
     }
 
+    // ============== Helpers ==============
+
+    /**
+     * Parse a slot name string into an {@link EquipmentSlot}.
+     * Returns {@code null} if the name is not recognized.
+     */
+    private static EquipmentSlot parseEquipmentSlot(String slotName) {
+        return switch (slotName.toLowerCase()) {
+            case "head", "helmet"      -> EquipmentSlot.HEAD;
+            case "chest", "chestplate", "body" -> EquipmentSlot.CHEST;
+            case "legs", "leggings"    -> EquipmentSlot.LEGS;
+            case "feet", "boots"       -> EquipmentSlot.FEET;
+            case "offhand", "shield"  -> EquipmentSlot.OFFHAND;
+            case "mainhand", "weapon"  -> EquipmentSlot.MAINHAND;
+            default                    -> null;
+        };
+    }
+
+    /**
+     * Get the default item stack for an equipment slot (used for test equipment).
+     */
+    private static ItemStack defaultItemForSlot(EquipmentSlot slot) {
+        return switch (slot) {
+            case HEAD    -> new ItemStack(Items.DIAMOND_HELMET);
+            case CHEST   -> new ItemStack(Items.DIAMOND_CHESTPLATE);
+            case LEGS    -> new ItemStack(Items.DIAMOND_LEGGINGS);
+            case FEET    -> new ItemStack(Items.DIAMOND_BOOTS);
+            case OFFHAND -> new ItemStack(Items.SHIELD);
+            default      -> new ItemStack(Items.DIAMOND_SWORD);
+        };
+    }
+
+    /**
+     * Resolve an enchantment holder from the "enchant" command argument.
+     * Sends a failure message and returns {@code null} if not found.
+     */
+    private static Holder<Enchantment> resolveEnchant(CommandContext<CommandSourceStack> context) {
+        var enchantId = ResourceLocationArgument.getId(context, "enchant");
+        ResourceKey<Enchantment> enchantKey = ResourceKey.create(
+                net.minecraft.core.registries.Registries.ENCHANTMENT, enchantId);
+        Holder<Enchantment> holder = ModEnchantments.getHolderOrNull(enchantKey);
+        if (holder == null) {
+            context.getSource().sendFailure(Component.literal("Enchantment not found: " + enchantId));
+        }
+        return holder;
+    }
+
     // ============== 命令实现 ==============
 
     private static int testDamage(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
@@ -153,17 +199,10 @@ public class ModTestCommands {
 
         var enchantId = ResourceLocationArgument.getId(context, "enchant");
         int level = IntegerArgumentType.getInteger(context, "level");
+        Holder<Enchantment> enchantHolder = resolveEnchant(context);
+        if (enchantHolder == null) return 0;
+
         ServerLevel levelObj = context.getSource().getLevel();
-
-        ResourceKey<Enchantment> enchantKey = ResourceKey.create(
-                net.minecraft.core.registries.Registries.ENCHANTMENT, enchantId);
-        Holder<Enchantment> enchantHolder = ModEnchantments.getHolder(enchantKey);
-
-        if (enchantHolder == null) {
-            context.getSource().sendFailure(Component.literal("Enchantment not found: " + enchantId));
-            return 0;
-        }
-
         FakePlayer fakePlayer = FakePlayerFactory.getMinecraft(levelObj);
         fakePlayer.setPos(target.getX(), target.getY(), target.getZ());
 
@@ -178,10 +217,11 @@ public class ModTestCommands {
         }
 
         // 验证假玩家装备
-        ItemStack mainHand = fakePlayer.getMainHandItem();
-        int enchantCheck = mainHand.getEnchantmentLevel(enchantHolder);
-        LOGGER.info("[TestCommand] FakePlayer mainHand: {} (enchant level: {}, expected: {})",
-                mainHand.getItem(), enchantCheck, level);
+        if (LOGGER.isDebugEnabled()) {
+            ItemStack mainHand = fakePlayer.getMainHandItem();
+            LOGGER.debug("[TestCommand] FakePlayer mainHand: {} (enchant level: {}, expected: {})",
+                    mainHand.getItem(), mainHand.getEnchantmentLevel(enchantHolder), level);
+        }
 
         float oldHealth = livingTarget.getHealth();
         livingTarget.invulnerableTime = 0;
@@ -192,22 +232,19 @@ public class ModTestCommands {
         DamageSource source = levelObj.damageSources().playerAttack(fakePlayer);
         boolean hurtResult = livingTarget.hurt(source, 8.0f);
 
-        LOGGER.info("[TestCommand] Attack: enchant={} Lv{} -> target={} (source=playerAttack, baseDamage=8.0, hurtResult={})",
-                enchantId, level, livingTarget.getName().getString(), hurtResult);
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[TestCommand] Attack: enchant={} Lv{} -> target={} (source=playerAttack, baseDamage=8.0, hurtResult={})",
+                    enchantId, level, livingTarget.getName().getString(), hurtResult);
+        }
 
         float newHealth = livingTarget.getHealth();
         float actualDamage = oldHealth - newHealth;
 
-        MutableComponent msg = Component.literal(
+        context.getSource().sendSuccess(() -> Component.literal(
                 String.format("FakePlayer with %s Lv.%d attacked %s: %.1f -> %.1f (%.1f dmg)",
                         enchantId, level, livingTarget.getName().getString(),
                         oldHealth, newHealth, actualDamage)
-        );
-        context.getSource().sendSuccess(() -> msg, true);
-
-        LOGGER.info("[TestCommand] Attack test: {} Lv{} -> {}: {} dmg",
-                enchantId, level, livingTarget.getName().getString(), actualDamage);
-
+        ), true);
         return 1;
     }
 
@@ -218,81 +255,24 @@ public class ModTestCommands {
             return 0;
         }
 
-        String slotName = StringArgumentType.getString(context, "slot").toLowerCase();
-        EquipmentSlot slot;
-        switch (slotName) {
-            case "head":
-            case "helmet":
-                slot = EquipmentSlot.HEAD;
-                break;
-            case "chest":
-            case "chestplate":
-            case "body":
-                slot = EquipmentSlot.CHEST;
-                break;
-            case "legs":
-            case "leggings":
-                slot = EquipmentSlot.LEGS;
-                break;
-            case "feet":
-            case "boots":
-                slot = EquipmentSlot.FEET;
-                break;
-            case "offhand":
-            case "shield":
-                slot = EquipmentSlot.OFFHAND;
-                break;
-            case "mainhand":
-            case "weapon":
-                slot = EquipmentSlot.MAINHAND;
-                break;
-            default:
-                context.getSource().sendFailure(Component.literal("Unknown slot: " + slotName));
-                return 0;
-        }
-
-        var enchantId = ResourceLocationArgument.getId(context, "enchant");
-        int level = IntegerArgumentType.getInteger(context, "level");
-
-        ResourceKey<Enchantment> enchantKey = ResourceKey.create(
-                net.minecraft.core.registries.Registries.ENCHANTMENT, enchantId);
-        Holder<Enchantment> enchantHolder = ModEnchantments.getHolder(enchantKey);
-
-        if (enchantHolder == null) {
-            context.getSource().sendFailure(Component.literal("Enchantment not found: " + enchantId));
+        String slotName = StringArgumentType.getString(context, "slot");
+        EquipmentSlot slot = parseEquipmentSlot(slotName);
+        if (slot == null) {
+            context.getSource().sendFailure(Component.literal("Unknown slot: " + slotName));
             return 0;
         }
 
-        ItemStack armorItem;
-        switch (slot) {
-            case HEAD:
-                armorItem = new ItemStack(Items.DIAMOND_HELMET);
-                break;
-            case CHEST:
-                armorItem = new ItemStack(Items.DIAMOND_CHESTPLATE);
-                break;
-            case LEGS:
-                armorItem = new ItemStack(Items.DIAMOND_LEGGINGS);
-                break;
-            case FEET:
-                armorItem = new ItemStack(Items.DIAMOND_BOOTS);
-                break;
-            case OFFHAND:
-                armorItem = new ItemStack(Items.SHIELD);
-                break;
-            default:
-                armorItem = new ItemStack(Items.DIAMOND_SWORD);
-                break;
-        }
+        int level = IntegerArgumentType.getInteger(context, "level");
+        Holder<Enchantment> enchantHolder = resolveEnchant(context);
+        if (enchantHolder == null) return 0;
 
+        ItemStack armorItem = defaultItemForSlot(slot);
         armorItem.enchant(enchantHolder, level);
-        int actualLevel = armorItem.getEnchantmentLevel(enchantHolder);
-        LOGGER.info("[TestCommand] Equipped {} with {} level {} (actual: {})",
-                slotName, enchantId, level, actualLevel);
 
         livingTarget.setItemSlot(slot, armorItem);
         context.getSource().sendSuccess(() -> Component.literal(
-                "Equipped " + slotName + " with " + enchantId + " " + level + " on " + livingTarget.getName().getString()
+                "Equipped " + slotName + " with " + ResourceLocationArgument.getId(context, "enchant")
+                        + " " + level + " on " + livingTarget.getName().getString()
         ), true);
         return 1;
     }
@@ -374,15 +354,8 @@ public class ModTestCommands {
         ServerPlayer player = context.getSource().getPlayerOrException();
         var enchantId = ResourceLocationArgument.getId(context, "enchant");
         int level = IntegerArgumentType.getInteger(context, "level");
-
-        ResourceKey<Enchantment> enchantKey = ResourceKey.create(
-                net.minecraft.core.registries.Registries.ENCHANTMENT, enchantId);
-        Holder<Enchantment> enchantHolder = ModEnchantments.getHolder(enchantKey);
-
-        if (enchantHolder == null) {
-            context.getSource().sendFailure(Component.literal("Enchantment not found: " + enchantId));
-            return 0;
-        }
+        Holder<Enchantment> enchantHolder = resolveEnchant(context);
+        if (enchantHolder == null) return 0;
 
         ItemStack sword = new ItemStack(Items.DIAMOND_SWORD);
         sword.enchant(enchantHolder, level);
@@ -396,52 +369,20 @@ public class ModTestCommands {
 
     private static int giveArmor(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         ServerPlayer player = context.getSource().getPlayerOrException();
-        String slotName = StringArgumentType.getString(context, "slot").toLowerCase();
+        String slotName = StringArgumentType.getString(context, "slot");
         var enchantId = ResourceLocationArgument.getId(context, "enchant");
         int level = IntegerArgumentType.getInteger(context, "level");
 
-        EquipmentSlot slot;
-        ItemStack armorItem;
-        switch (slotName) {
-            case "head":
-            case "helmet":
-                slot = EquipmentSlot.HEAD;
-                armorItem = new ItemStack(Items.DIAMOND_HELMET);
-                break;
-            case "chest":
-            case "chestplate":
-                slot = EquipmentSlot.CHEST;
-                armorItem = new ItemStack(Items.DIAMOND_CHESTPLATE);
-                break;
-            case "legs":
-            case "leggings":
-                slot = EquipmentSlot.LEGS;
-                armorItem = new ItemStack(Items.DIAMOND_LEGGINGS);
-                break;
-            case "feet":
-            case "boots":
-                slot = EquipmentSlot.FEET;
-                armorItem = new ItemStack(Items.DIAMOND_BOOTS);
-                break;
-            case "offhand":
-            case "shield":
-                slot = EquipmentSlot.OFFHAND;
-                armorItem = new ItemStack(Items.SHIELD);
-                break;
-            default:
-                context.getSource().sendFailure(Component.literal("Unknown slot: " + slotName));
-                return 0;
-        }
-
-        ResourceKey<Enchantment> enchantKey = ResourceKey.create(
-                net.minecraft.core.registries.Registries.ENCHANTMENT, enchantId);
-        Holder<Enchantment> enchantHolder = ModEnchantments.getHolder(enchantKey);
-
-        if (enchantHolder == null) {
-            context.getSource().sendFailure(Component.literal("Enchantment not found: " + enchantId));
+        EquipmentSlot slot = parseEquipmentSlot(slotName);
+        if (slot == null) {
+            context.getSource().sendFailure(Component.literal("Unknown slot: " + slotName));
             return 0;
         }
 
+        Holder<Enchantment> enchantHolder = resolveEnchant(context);
+        if (enchantHolder == null) return 0;
+
+        ItemStack armorItem = defaultItemForSlot(slot);
         armorItem.enchant(enchantHolder, level);
         player.setItemSlot(slot, armorItem);
 

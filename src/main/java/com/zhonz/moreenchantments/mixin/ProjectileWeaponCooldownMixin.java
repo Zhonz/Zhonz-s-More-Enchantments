@@ -16,16 +16,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Mixin for ProjectileWeaponItem to implement the "神咒" (Divine Curse) enchantment's
- * cooldown doubling.
+ * use duration doubling effect.
  *
- * The description says "蓄力速度、冷却时间翻倍" (charge speed, cooldown doubled).
- * The "cooldown" in this context refers to the time after firing before the weapon
- * can be used again. For bows, the "cooldown" is essentially the use duration.
+ * Description: "蓄力速度、冷却时间翻倍" (charge speed and cooldown time doubled)
+ * 项目武器(Bow/Trident/Crossbow)的充能/冷却时间翻倍: 玩家需要 2 倍的时间来蓄力.
  *
- * We interpret "cooldown doubled" as: the total time between consecutive shots
- * (use duration + post-use cooldown) is doubled.
- *
- * For simplicity, we double the use duration for projectile weapons under Divine Curse.
+ * 由于 {@link ProjectileWeaponItem} 是 {@link BowItem}, {@link TridentItem},
+ * {@link CrossbowItem} 的父类, 该 mixin 自动覆盖所有此类武器.
  */
 @Mixin(ProjectileWeaponItem.class)
 public class ProjectileWeaponCooldownMixin {
@@ -36,7 +33,7 @@ public class ProjectileWeaponCooldownMixin {
         if (level <= 0) return;
 
         int original = cir.getReturnValue();
-        // 冷却时间翻倍
-        cir.setReturnValue(original * 2);
+        // 充能/冷却时间翻倍(取最大值避免变成0)
+        cir.setReturnValue(Math.max(1, original * 2));
     }
 }

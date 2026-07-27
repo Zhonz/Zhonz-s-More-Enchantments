@@ -11,10 +11,7 @@
         "ItemStackDurabilityMixin",
         "BlockBreakMixin",
         "CrossbowChargeMixin",
-        "BowChargeMixin",
-        "TridentChargeMixin",
         "ProjectileWeaponCooldownMixin",
-        "PlayerAttackMixin",
         "PlayerShieldBlockMixin",
         "PlayerFoodEffectMixin",
         "DivineCurseBlockBreakMixin"

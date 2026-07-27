@@ -937,10 +937,12 @@ public class ModEventHandlers {
         }
     }
 
+    @SuppressWarnings("deprecation")
     private static void tickHang(Player player, int tickCount) {
         if (!hasEnchantmentInInventory(player, ModEnchantments.HANG)) {
             // Strip granted flight if the player no longer carries Hang
             if (player.isCreative() || player.isSpectator()) return;
+            // mayfly is marked @Deprecated in 1.21.1 but is still the only field that gates player flight.
             if (!player.getAbilities().mayfly) return;
             player.getAbilities().mayfly = false;
             player.getAbilities().flying = false;
@@ -949,6 +951,7 @@ public class ModEventHandlers {
         }
 
         player.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 4, false, false));
+        // mayfly is marked @Deprecated in 1.21.1 but is still the only field that gates player flight.
         player.getAbilities().mayfly = true;
         player.getAbilities().flying = true;
         player.onUpdateAbilities();

@@ -3,16 +3,25 @@ package com.zhonz.moreenchantments.mixin;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
 import com.zhonz.moreenchantments.event.EntityDataStorage;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.TickTask;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.Level;
+import net.minecraft.core.Holder;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import static com.zhonz.moreenchantments.ZhonzMoreEnchantments.MODID;
 
 /**
  * Mixin for Player to implement the "坚韧" (Toughness) enchantment's
@@ -26,6 +35,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(Player.class)
 public abstract class PlayerShieldBlockMixin {
+
+    private static final String KEY_TOUGHNESS_AXE_BROKEN_TICK = "zhonz_toughness_axe_broken_tick";
+    /** 坚韧斧头破盾触发后属性修饰符持续时间(Ticks): 20秒 = 400 ticks. */
+    private static final int TOUGHNESS_BONUS_DURATION_TICKS = 400;
+    /** 坚韧附魔给予的护甲/韧性加成值. */
+    private static final double TOUGHNESS_BONUS_AMOUNT = 20.0;
 
     /**
      * Player.disableShield(boolean) - 在被斧头攻击时调用
@@ -45,68 +60,56 @@ public abstract class PlayerShieldBlockMixin {
         if (!useItem.is(Items.SHIELD)) return;
 
         // 检查盾是否有坚韧附魔
-        int toughnessLevel = useItem.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.TOUGHNESS));
-        if (toughnessLevel <= 0) return;
+        if (useItem.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.TOUGHNESS)) <= 0) return;
 
-        // 触发+20护甲和+20韧性
+        // 防止重复触发
         CompoundTag data = EntityDataStorage.getEntityData(self);
         long currentTick = self.level().getGameTime();
-        long lastTriggered = data.contains("zhonz_toughness_axe_broken_tick")
-                ? data.getLong("zhonz_toughness_axe_broken_tick")
-                : -1;
-
+        long lastTriggered = data.contains(KEY_TOUGHNESS_AXE_BROKEN_TICK)
+                ? data.getLong(KEY_TOUGHNESS_AXE_BROKEN_TICK) : -1;
         if (lastTriggered == currentTick) return;
-        data.putLong("zhonz_toughness_axe_broken_tick", currentTick);
+        data.putLong(KEY_TOUGHNESS_AXE_BROKEN_TICK, currentTick);
 
-        // +20 护甲
-        var armorAttr = self.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR);
-        if (armorAttr != null) {
-            net.minecraft.resources.ResourceLocation armorModLoc =
-                    net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
-                            "zhonz_more_enchantments", "toughness_armor_axe_" + self.getId());
-            armorAttr.removeModifier(armorModLoc);
-            armorAttr.addTransientModifier(new net.minecraft.world.entity.ai.attributes.AttributeModifier(
-                    armorModLoc, 20.0, net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE
-            ));
-        }
-        // +20 韧性
-        var toughnessAttr = self.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR_TOUGHNESS);
-        if (toughnessAttr != null) {
-            net.minecraft.resources.ResourceLocation toughModLoc =
-                    net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
-                            "zhonz_more_enchantments", "toughness_tough_axe_" + self.getId());
-            toughnessAttr.removeModifier(toughModLoc);
-            toughnessAttr.addTransientModifier(new net.minecraft.world.entity.ai.attributes.AttributeModifier(
-                    toughModLoc, 20.0, net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE
-            ));
-        }
+        // +20 护甲 + 韧性
+        applyToughnessBonus(self, "_axe_");
 
         // 20秒后移除
         if (self.level() instanceof ServerLevel serverLevel) {
-            serverLevel.getServer().tell(new net.minecraft.server.TickTask(400, () -> {
-                if (self.isAlive()) {
-                    var armorAttr2 = self.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR);
-                    if (armorAttr2 != null) {
-                        net.minecraft.resources.ResourceLocation armorModLoc2 =
-                                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
-                                        "zhonz_more_enchantments", "toughness_armor_axe_" + self.getId());
-                        armorAttr2.removeModifier(armorModLoc2);
-                    }
-                    var toughnessAttr2 = self.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ARMOR_TOUGHNESS);
-                    if (toughnessAttr2 != null) {
-                        net.minecraft.resources.ResourceLocation toughModLoc2 =
-                                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
-                                        "zhonz_more_enchantments", "toughness_tough_axe_" + self.getId());
-                        toughnessAttr2.removeModifier(toughModLoc2);
-                    }
-                }
+            serverLevel.getServer().tell(new TickTask(TOUGHNESS_BONUS_DURATION_TICKS, () -> {
+                if (self.isAlive()) removeToughnessBonus(self, "_axe_");
             }));
-        }
-
-        if (self.level() instanceof ServerLevel serverLevel) {
             serverLevel.playSound(null, self.getX(), self.getY(), self.getZ(),
-                    net.minecraft.sounds.SoundEvents.SHIELD_BREAK,
-                    net.minecraft.sounds.SoundSource.PLAYERS, 1.0f, 0.7f);
+                    SoundEvents.SHIELD_BREAK, SoundSource.PLAYERS, 1.0f, 0.7f);
         }
+    }
+
+    private static ResourceLocation armorModifier(LivingEntity entity, String suffix) {
+        return ResourceLocation.fromNamespaceAndPath(MODID, "toughness_armor" + suffix + entity.getId());
+    }
+
+    private static ResourceLocation toughnessModifier(LivingEntity entity, String suffix) {
+        return ResourceLocation.fromNamespaceAndPath(MODID, "toughness_tough" + suffix + entity.getId());
+    }
+
+    private static void applyToughnessBonus(LivingEntity entity, String suffix) {
+        replaceTransient(entity, Attributes.ARMOR, armorModifier(entity, suffix), TOUGHNESS_BONUS_AMOUNT);
+        replaceTransient(entity, Attributes.ARMOR_TOUGHNESS, toughnessModifier(entity, suffix), TOUGHNESS_BONUS_AMOUNT);
+    }
+
+    private static void removeToughnessBonus(LivingEntity entity, String suffix) {
+        removeIfPresent(entity, Attributes.ARMOR, armorModifier(entity, suffix));
+        removeIfPresent(entity, Attributes.ARMOR_TOUGHNESS, toughnessModifier(entity, suffix));
+    }
+
+    private static void replaceTransient(LivingEntity entity, Holder<Attribute> attr, ResourceLocation id, double amount) {
+        var instance = entity.getAttribute(attr);
+        if (instance == null) return;
+        instance.removeModifier(id);
+        instance.addTransientModifier(new AttributeModifier(id, amount, AttributeModifier.Operation.ADD_VALUE));
+    }
+
+    private static void removeIfPresent(LivingEntity entity, Holder<Attribute> attr, ResourceLocation id) {
+        var instance = entity.getAttribute(attr);
+        if (instance != null) instance.removeModifier(id);
     }
 }

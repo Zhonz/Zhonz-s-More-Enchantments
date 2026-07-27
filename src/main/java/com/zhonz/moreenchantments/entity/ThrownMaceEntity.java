@@ -2,17 +2,15 @@ package com.zhonz.moreenchantments.entity;
 
 import com.zhonz.moreenchantments.event.EntityDataStorage;
 import net.minecraft.core.particles.ParticleTypes;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.AbstractArrow;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -23,24 +21,24 @@ import net.minecraft.world.phys.Vec3;
  */
 public class ThrownMaceEntity extends AbstractArrow {
 
-    private ItemStack maceStack = new ItemStack(Items.MACE);
-    private float damageMultiplier = 10.0f;
+    /** 冷却时间(Ticks): 5秒 = 100 ticks. */
+    private static final int COOLDOWN_TICKS = 100;
+    /** 命中时对目标造成攻击伤害的倍数. */
+    private static final float DAMAGE_MULTIPLIER = 10.0f;
+    /** 溅射伤害比例(基础伤害的百分比). */
+    private static final float SPLASH_DAMAGE_RATIO = 0.5f;
+    /** 溅射范围半径. */
+    private static final double SPLASH_RADIUS = 3.0;
 
     public ThrownMaceEntity(EntityType<? extends AbstractArrow> entityType, Level level) {
         super(entityType, level);
-        this.setBaseDamage(7.0);
         this.pickup = Pickup.DISALLOWED;
     }
 
-    public ThrownMaceEntity(Level level, Player player, ItemStack stack, float chargeRatio) {
+    public ThrownMaceEntity(Level level, Player player, ItemStack stack) {
         super(com.zhonz.moreenchantments.ZhonzMoreEnchantments.THROWN_MACE_ENTITY.get(), player, level, stack, stack.copy());
-        this.maceStack = stack.copy();
         this.pickup = Pickup.DISALLOWED;
-        this.damageMultiplier = 10.0f;
-
-        // 根据蓄力比例设置基础伤害
-        double playerDamage = player.getAttributeValue(Attributes.ATTACK_DAMAGE);
-        this.setBaseDamage(playerDamage * damageMultiplier);
+        this.setBaseDamage(player.getAttributeValue(Attributes.ATTACK_DAMAGE) * DAMAGE_MULTIPLIER);
     }
 
     @Override
@@ -52,33 +50,24 @@ public class ThrownMaceEntity extends AbstractArrow {
     public void tick() {
         super.tick();
         // 飞行轨迹粒子效果（水花特效）
-        if (this.level() instanceof ServerLevel serverLevel && this.tickCount % 2 == 0) {
+        if (this.tickCount % 2 == 0 && this.level() instanceof ServerLevel serverLevel) {
             Vec3 pos = this.position();
-            serverLevel.sendParticles(ParticleTypes.BUBBLE,
-                    pos.x, pos.y, pos.z,
-                    2, 0.1, 0.1, 0.1, 0.02);
-            serverLevel.sendParticles(ParticleTypes.SPLASH,
-                    pos.x, pos.y, pos.z,
-                    1, 0.1, 0.1, 0.1, 0.01);
+            serverLevel.sendParticles(ParticleTypes.BUBBLE, pos.x, pos.y, pos.z, 2, 0.1, 0.1, 0.1, 0.02);
+            serverLevel.sendParticles(ParticleTypes.SPLASH,  pos.x, pos.y, pos.z, 1, 0.1, 0.1, 0.1, 0.01);
         }
     }
 
     @Override
     protected void onHitEntity(EntityHitResult result) {
-        if (this.level().isClientSide()) return;
+        if (this.level().isClientSide()) {
+            this.discard();
+            return;
+        }
 
-        Entity entity = result.getEntity();
-        if (entity instanceof LivingEntity target && this.getOwner() instanceof Player player) {
-            // 先造成伤害（super.onHitEntity会处理）
+        if (result.getEntity() instanceof LivingEntity target && this.getOwner() instanceof Player player) {
             super.onHitEntity(result);
-
-            // 玩家传送至目标位置
             player.teleportTo(target.getX(), target.getY(), target.getZ());
-
-            // 范围溅射伤害（对附近生物造成50%伤害）
             applySplashDamage(player, target.position(), (float) this.getBaseDamage());
-
-            // 进入冷却
             setCooldown(player);
 
             if (this.level() instanceof ServerLevel sl) {
@@ -92,7 +81,10 @@ public class ThrownMaceEntity extends AbstractArrow {
 
     @Override
     protected void onHitBlock(BlockHitResult result) {
-        if (this.level().isClientSide()) return;
+        if (this.level().isClientSide()) {
+            this.discard();
+            return;
+        }
 
         super.onHitBlock(result);
 
@@ -100,11 +92,7 @@ public class ThrownMaceEntity extends AbstractArrow {
             Vec3 pos = result.getLocation();
             // 玩家传送至命中位置（稍微抬高一点避免卡进方块）
             player.teleportTo(pos.x, pos.y + 0.5, pos.z);
-
-            // 范围溅射伤害
             applySplashDamage(player, pos, (float) this.getBaseDamage());
-
-            // 进入冷却
             setCooldown(player);
 
             if (this.level() instanceof ServerLevel sl) {
@@ -118,10 +106,11 @@ public class ThrownMaceEntity extends AbstractArrow {
 
     private static void applySplashDamage(Player player, Vec3 center, float damage) {
         Level level = player.level();
-        float splashDamage = damage * 0.5f;
-        for (LivingEntity nearby : level.getEntitiesOfClass(LivingEntity.class,
-                new net.minecraft.world.phys.AABB(center.x - 3, center.y - 2, center.z - 3,
-                        center.x + 3, center.y + 3, center.z + 3))) {
+        float splashDamage = damage * SPLASH_DAMAGE_RATIO;
+        AABB box = new AABB(
+                center.x - SPLASH_RADIUS, center.y - SPLASH_RADIUS, center.z - SPLASH_RADIUS,
+                center.x + SPLASH_RADIUS, center.y + SPLASH_RADIUS, center.z + SPLASH_RADIUS);
+        for (LivingEntity nearby : level.getEntitiesOfClass(LivingEntity.class, box)) {
             if (nearby != player && nearby.isAlive() && player.canAttack(nearby)) {
                 nearby.hurt(level.damageSources().playerAttack(player), splashDamage);
             }
@@ -129,7 +118,6 @@ public class ThrownMaceEntity extends AbstractArrow {
     }
 
     private static void setCooldown(Player player) {
-        CompoundTag data = EntityDataStorage.getEntityData(player);
-        data.putInt("zhonz_must_open_path_cd", 100); // 5秒冷却
+        EntityDataStorage.getEntityData(player).putInt("zhonz_must_open_path_cd", COOLDOWN_TICKS);
     }
 }

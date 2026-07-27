@@ -1,6 +1,5 @@
 package com.zhonz.moreenchantments.mixin;
 
-import com.zhonz.moreenchantments.ZhonzMoreEnchantments;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
 import com.zhonz.moreenchantments.entity.ThrownMaceEntity;
 import com.zhonz.moreenchantments.event.EntityDataStorage;
@@ -9,6 +8,7 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -16,7 +16,6 @@ import net.minecraft.world.item.MaceItem;
 import net.minecraft.world.level.Level;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -32,10 +31,20 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(MaceItem.class)
 public abstract class MaceItemMixin {
 
-    @Shadow public abstract int getUseDuration(ItemStack stack, LivingEntity entity);
+    private static final String KEY_MUST_OPEN_PATH_CD = "zhonz_must_open_path_cd";
+    private static final String KEY_MUST_OPEN_PATH_CHARGE = "zhonz_must_open_path_charge_ticks";
+    /** 触发投掷的最短蓄力时间(ticks): 0.5s = 10 ticks. */
+    private static final int MIN_CHARGE_TICKS = 10;
+    /** 满蓄力所需时间(ticks): 2s = 40 ticks. */
+    private static final int FULL_CHARGE_TICKS = 40;
+    /** 投掷时的最小速度. */
+    private static final float MIN_THROW_VELOCITY = 1.5F;
+    /** 满蓄力时额外增加的速度. */
+    private static final float CHARGE_VELOCITY_BONUS = 0.5F;
+    /** 投掷后消耗的耐久值. */
+    private static final int THROW_DURABILITY_COST = 3;
 
-    @Unique
-    private static final String ZHONZ_CHARGE_TICKS = "zhonz_must_open_path_charge_ticks";
+    @Shadow public abstract int getUseDuration(ItemStack stack, LivingEntity entity);
 
     /**
      * Right-click to start charging the mace like a trident.
@@ -48,10 +57,7 @@ public abstract class MaceItemMixin {
 
         // 检查冷却
         CompoundTag data = EntityDataStorage.getEntityData(player);
-        int cooldown = data.contains("zhonz_must_open_path_cd") ? data.getInt("zhonz_must_open_path_cd") : 0;
-        if (cooldown > 0) {
-            return;
-        }
+        if (data.getInt(KEY_MUST_OPEN_PATH_CD) > 0) return;
 
         player.startUsingItem(hand);
         cir.setReturnValue(InteractionResultHolder.consume(stack));
@@ -67,9 +73,7 @@ public abstract class MaceItemMixin {
         if (mustOpenPathLevel <= 0) return;
 
         CompoundTag data = EntityDataStorage.getEntityData(player);
-        int chargeTicks = data.contains(ZHONZ_CHARGE_TICKS) ? data.getInt(ZHONZ_CHARGE_TICKS) : 0;
-        chargeTicks++;
-        data.putInt(ZHONZ_CHARGE_TICKS, chargeTicks);
+        data.putInt(KEY_MUST_OPEN_PATH_CHARGE, data.getInt(KEY_MUST_OPEN_PATH_CHARGE) + 1);
     }
 
     /**
@@ -82,31 +86,28 @@ public abstract class MaceItemMixin {
         if (mustOpenPathLevel <= 0) return;
 
         CompoundTag data = EntityDataStorage.getEntityData(player);
-        int chargeTicks = data.contains(ZHONZ_CHARGE_TICKS) ? data.getInt(ZHONZ_CHARGE_TICKS) : 0;
-        data.putInt(ZHONZ_CHARGE_TICKS, 0);
+        int chargeTicks = data.getInt(KEY_MUST_OPEN_PATH_CHARGE);
+        data.putInt(KEY_MUST_OPEN_PATH_CHARGE, 0);
 
-        // 至少蓄力 10 ticks (0.5s) 才执行
-        if (chargeTicks < 10) return;
-
-        float chargeRatio = Math.min(1.0f, chargeTicks / 40.0f);
+        if (chargeTicks < MIN_CHARGE_TICKS) return;
+        float chargeRatio = Math.min(1.0f, chargeTicks / (float) FULL_CHARGE_TICKS);
 
         // 创建并发射投掷物实体
-        ThrownMaceEntity thrownMace = new ThrownMaceEntity(level, player, stack.copy(), chargeRatio);
+        ThrownMaceEntity thrownMace = new ThrownMaceEntity(level, player, stack.copy());
 
         // 设置投掷方向与速度
         thrownMace.shootFromRotation(player, player.getXRot(), player.getYRot(), 0.0F,
-                1.5F + chargeRatio * 0.5F, 1.0F);
+                MIN_THROW_VELOCITY + chargeRatio * CHARGE_VELOCITY_BONUS, 1.0F);
 
-        // 添加到世界
         level.addFreshEntity(thrownMace);
 
         // 播放投掷音效
         level.playSound(null, player.getX(), player.getY(), player.getZ(),
                 SoundEvents.TRIDENT_THROW, SoundSource.PLAYERS, 1.0F, 0.8F);
 
-        // 玩家手中的重锤消耗（不消失但扣耐久）
+        // 玩家手中的重锤消耗耐久
         if (stack.isDamageableItem()) {
-            stack.hurtAndBreak(3, player, net.minecraft.world.entity.EquipmentSlot.MAINHAND);
+            stack.hurtAndBreak(THROW_DURABILITY_COST, player, EquipmentSlot.MAINHAND);
         }
     }
 }

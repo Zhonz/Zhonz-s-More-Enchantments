@@ -68,12 +68,18 @@ public class ModEventHandlers {
     private static final String KEY_PROPHETS_CALL_ACTIVE = "zhonz_prophets_call_active";
     private static final String KEY_PROPHETS_CALL_UNTIL = "zhonz_prophets_call_until";
     private static final String KEY_SUPREME_ART_LAST_LEVEL = "zhonz_supreme_art_last_level";
+    private static final String KEY_FOREKNOWLEDGE_DODGE = "zhonz_foreknowledge_dodge_prob";
+    private static final String KEY_FOREKNOWLEDGE_LAST_COMBAT = "zhonz_foreknowledge_last_combat";
 
     // ===== Attribute Modifier ResourceLocations =====
     private static final ResourceLocation SUPREME_ART_RANGE_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "supreme_art_range");
     private static final ResourceLocation SUPREME_ART_ATTACK_SPEED_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "supreme_art_attack_speed");
     private static final ResourceLocation DIVINE_CURSE_DAMAGE_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "divine_curse_damage");
     private static final ResourceLocation DIVINE_CURSE_ATTACK_SPEED_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "divine_curse_attack_speed");
+    private static final ResourceLocation TOUGHNESS_ARMOR_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "toughness_armor");
+    private static final ResourceLocation TOUGHNESS_TOUGHNESS_MODIFIER = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "toughness_toughness");
+    private static final ResourceLocation FLIPPING_COIN_MAX_HP = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "flipping_coin_max_hp");
+    private static final ResourceLocation FLIPPING_COIN_TARGET_MAX_HP = ResourceLocation.fromNamespaceAndPath("zhonz_more_enchantments", "flipping_coin_target_max_hp");
 
     // ===== Registration =====
 
@@ -236,25 +242,29 @@ public class ModEventHandlers {
                 defenderData.putFloat(KEY_SHELL_STRIP_RAW, rawDamage);
             }
 
-            // === 1. 终结 Finale: If base attack damage >= 7, deal 100000x damage (pre-armor) ===
+            // === 1. 终结 Finale: If melee weapon attack damage >= 7, deal 100000x damage ===
             int finaleLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.FINALE);
             if (finaleLevel > 0) {
-                double attackDamage = attacker.getAttributeValue(Attributes.ATTACK_DAMAGE);
-                if (attackDamage >= 7.0) {
-                    LOGGER.debug("[Finale] Triggered! Instant kill (100000x damage)");
-                    event.setCanceled(true);
-                    // Reduce weapon durability
-                    ItemStack mainHand = attacker.getMainHandItem();
-                    if (mainHand.isDamageableItem()) {
-                        int durabilityCost = (int) Math.min(rawDamage, mainHand.getMaxDamage() - mainHand.getDamageValue());
-                        if (durabilityCost > 0) {
-                            mainHand.hurtAndBreak(durabilityCost, attacker, EquipmentSlot.MAINHAND);
+                ItemStack mainHand = attacker.getMainHandItem();
+                if (isMeleeWeapon(mainHand)) {
+                    double attackDamage = attacker.getAttributeValue(Attributes.ATTACK_DAMAGE);
+                    if (attackDamage >= 7.0) {
+                        LOGGER.debug("[Finale] Triggered! 100000x damage");
+                        float newDamage = rawDamage * 100000.0f;
+                        event.setCanceled(true);
+                        if (mainHand.isDamageableItem()) {
+                            int durabilityCost = Math.min((int) newDamage, mainHand.getMaxDamage() - mainHand.getDamageValue());
+                            if (durabilityCost > 0) {
+                                mainHand.hurtAndBreak(durabilityCost, attacker, EquipmentSlot.MAINHAND);
+                            }
                         }
+                        float newHealth = Math.max(0, defender.getHealth() - newDamage);
+                        defender.setHealth(newHealth);
+                        if (newHealth <= 0) {
+                            defender.die(source);
+                        }
+                        return;
                     }
-                    // 直接设置血量为0并触发死亡
-                    defender.setHealth(0);
-                    defender.die(source);
-                    return;
                 }
             }
 
@@ -294,6 +304,37 @@ public class ModEventHandlers {
                     defender.setHealth(0);
                     defender.die(source);
                     return;
+                }
+            }
+        }
+
+        // === 33. 不完整的预知眼 Incomplete Foreknowledge Eye: Dodge incoming attack ===
+        {
+            int foreknowledgeLevel = getSlotEnchantmentLevel(defender, ModEnchantments.INCOMPLETE_FOREKNOWLEDGE_EYE, EquipmentSlot.HEAD);
+            if (foreknowledgeLevel > 0) {
+                CompoundTag data = getEntityData(defender);
+                float dodgeProb = data.contains(KEY_FOREKNOWLEDGE_DODGE) ? data.getFloat(KEY_FOREKNOWLEDGE_DODGE) : 0.80f;
+                data.putLong(KEY_FOREKNOWLEDGE_LAST_COMBAT, defender.level().getGameTime());
+
+                if (RANDOM.nextFloat() < dodgeProb) {
+                    // Successful dodge: move 1/4 block in a random direction
+                    float angle = RANDOM.nextFloat() * 2.0f * (float) Math.PI;
+                    double offsetX = Math.cos(angle) * 0.25;
+                    double offsetZ = Math.sin(angle) * 0.25;
+                    defender.teleportTo(defender.getX() + offsetX, defender.getY(), defender.getZ() + offsetZ);
+                    // Cancel the damage
+                    event.setCanceled(true);
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug("[ForeknowledgeEye] Dodged attack! dodgeProb={}", dodgeProb);
+                    }
+                    return;
+                } else {
+                    // Failed dodge: reduce dodge probability by 10%
+                    float newProb = Math.max(0.05f, dodgeProb - 0.10f);
+                    data.putFloat(KEY_FOREKNOWLEDGE_DODGE, newProb);
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug("[ForeknowledgeEye] Failed dodge! New prob={}", newProb);
+                    }
                 }
             }
         }
@@ -394,11 +435,15 @@ public class ModEventHandlers {
 
         // NOTE: 终结(Finale)、必须开辟的通路(MustOpenPath)和收割(Harvest)已在LivingIncomingDamageEvent中处理
 
-        // --- 4. 制裁 Sanction: Deal 1%/2%/3% of target's MAX HP as bonus damage ---
+        // --- 4. 制裁 Sanction: Deal 1%/2%/3% of target's MAX HP as TRUE damage (bypasses armor) ---
         int sanctionLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.SANCTION);
         if (sanctionLevel > 0) {
-            float bonusDamage = defender.getMaxHealth() * (0.01f * sanctionLevel);
-            amount += bonusDamage;
+            float trueDamage = defender.getMaxHealth() * (0.01f * sanctionLevel);
+            float newHp = Math.max(0, defender.getHealth() - trueDamage);
+            defender.setHealth(newHp);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("[Sanction] Dealt {} true damage (level={})", trueDamage, sanctionLevel);
+            }
         }
 
         // --- 7. 冲锋手 Charger: Damage scales with movement speed ---
@@ -554,11 +599,10 @@ public class ModEventHandlers {
             attacker.getMainHandItem().setCount(0);
         }
 
-        // --- 25. 爆裂黎明 Explosive Dawn: Crossbow +300% damage, splash ---
+        // --- 25. 爆裂黎明 Explosive Dawn: Crossbow +300% damage, splash, invincibility during reload ---
         int explosiveDawnLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.EXPLOSIVE_DAWN);
         if (explosiveDawnLevel > 0 && mainHand.getItem() == Items.CROSSBOW) {
-            amount *= 4.0f; // +300% = 4x total
-            // Splash damage: 100% at center, 0% at 15 blocks
+            amount *= 4.0f;
             Level level = defender.level();
             double splashRadius = 15.0;
             AABB box = defender.getBoundingBox().inflate(splashRadius);
@@ -569,27 +613,32 @@ public class ModEventHandlers {
                     nearby.hurt(source, amount * falloff);
                 }
             }
-            // Note: Slower reload and invincibility during reload require a Mixin
-            // on CrossbowItem for full implementation.
+            // Mark attacker as invincible during reload (tracked via entity data)
+            CompoundTag attackerData = getEntityData(attacker);
+            attackerData.putBoolean(KEY_EXPLOSIVE_DAWN_RELOADING, true);
         }
 
-        // --- 26. 假面的愚者 Fools Mask: Lucky/Unlucky damage modifier ---
-        int foolsMaskLevel = getEnchantmentLevel(attacker, ModEnchantments.FOOLS_MASK);
+        // --- 26. 假面的愚者 Fools Mask: Lucky/Unlucky - defender takes buff/debuff, attacker damage modified ---
+        int foolsMaskLevel = getEnchantmentLevel(defender, ModEnchantments.FOOLS_MASK);
         if (foolsMaskLevel > 0) {
-            CompoundTag data = getEntityData(attacker);
+            CompoundTag data = getEntityData(defender);
             boolean isLucky = data.getBoolean(KEY_FOOLS_MASK_LUCKY);
             if (isLucky) {
-                // Lucky: 100-300% damage, lower = more likely
+                // Lucky: defender gets random buff, attacker deals 100-300% damage
+                applyRandomBuff(defender);
                 float multiplier = 1.0f + RANDOM.nextFloat() * RANDOM.nextFloat() * 2.0f;
                 amount *= multiplier;
-                // Random buff on hit
-                applyRandomBuff(attacker);
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("[FoolsMask] Lucky! Damage x{}", String.format("%.2f", multiplier));
+                }
             } else {
-                // Unlucky: 100-1% damage, higher = more likely (skewed toward 1.0)
+                // Unlucky: defender gets random debuff, attacker deals 100-1% damage
+                applyRandomDebuff(defender);
                 float multiplier = 1.0f - RANDOM.nextFloat() * RANDOM.nextFloat() * 0.99f;
                 amount *= Math.max(0.01f, multiplier);
-                // Random debuff on hit
-                applyRandomDebuff(attacker);
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("[FoolsMask] Unlucky! Damage x{}", String.format("%.2f", multiplier));
+                }
             }
         }
 
@@ -614,20 +663,33 @@ public class ModEventHandlers {
             if (attackStacks < 3) {
                 attackStacks++;
                 attackerData.putInt(KEY_FLIPPING_COIN_ATTACK_STACKS, attackStacks);
-                // Gain 1 permanent Strength level
                 attacker.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, Integer.MAX_VALUE, attackStacks - 1, false, false));
-                // Gain 1 max HP (via Health attribute modifier)
-                // Note: Permanent max HP modification requires attribute modifier with MULTIPLY_BASE or ADDITION
+                // Gain 1 max HP via attribute modifier
+                var attackerMaxHp = attacker.getAttribute(Attributes.MAX_HEALTH);
+                if (attackerMaxHp != null) {
+                    attackerMaxHp.removeModifier(FLIPPING_COIN_MAX_HP);
+                    attackerMaxHp.addPermanentModifier(new AttributeModifier(
+                            FLIPPING_COIN_MAX_HP, attackStacks, AttributeModifier.Operation.ADD_VALUE
+                    ));
+                    attacker.setHealth(attacker.getHealth() + 1.0f);
+                }
             }
 
-            // Target loses 1 max HP and gains Weakness I for 30s
             CompoundTag defenderData = getEntityData(defender);
             int targetStacks = defenderData.contains(KEY_FLIPPING_COIN_TARGET_STACKS) ? defenderData.getInt(KEY_FLIPPING_COIN_TARGET_STACKS) : 0;
             if (targetStacks < 3) {
                 targetStacks++;
                 defenderData.putInt(KEY_FLIPPING_COIN_TARGET_STACKS, targetStacks);
-                defender.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 600, 0)); // 30 seconds
-                // Note: Reducing max HP requires attribute modifier removal
+                defender.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 600, 0));
+                // Lose 1 max HP via attribute modifier
+                var defenderMaxHp = defender.getAttribute(Attributes.MAX_HEALTH);
+                if (defenderMaxHp != null) {
+                    defenderMaxHp.removeModifier(FLIPPING_COIN_TARGET_MAX_HP);
+                    defenderMaxHp.addPermanentModifier(new AttributeModifier(
+                            FLIPPING_COIN_TARGET_MAX_HP, -targetStacks, AttributeModifier.Operation.ADD_VALUE
+                    ));
+                    defender.setHealth(Math.min(defender.getHealth(), (float) defenderMaxHp.getValue()));
+                }
             }
         }
 
@@ -637,12 +699,9 @@ public class ModEventHandlers {
         int grievousWoundLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.GRIEVOUS_WOUND);
         if (grievousWoundLevel > 0) {
             CompoundTag defenderData = getEntityData(defender);
-            // Apply healing reduction for 5 seconds (100 ticks)
             defenderData.putLong(KEY_GRIEVOUS_WOUND_UNTIL, defender.level().getGameTime() + 100);
-            // Note: Actual healing reduction requires a Mixin on LivingEntity.heal()
-            // to check this data and reduce the healing amount by 30%.
-            // As a visual indicator, apply Wither effect
-            defender.addEffect(new MobEffectInstance(MobEffects.WITHER, 100, 0));
+            // Apply Wither II to reduce healing by 30% (Wither II reduces healing by 30%)
+            defender.addEffect(new MobEffectInstance(MobEffects.WITHER, 100, 1));
         }
 
         return amount;
@@ -678,20 +737,23 @@ public class ModEventHandlers {
                 attacker.setDeltaMovement(knockDir.x, Math.abs(knockDir.y) + 0.5, knockDir.z);
                 attacker.hurtMarked = true;
 
-                // Drop random mineral items at attacker location
+                // Drop random quantity (1-5) of random mineral items at attacker location
                 if (attacker.level() instanceof ServerLevel serverLevel) {
-                    ItemStack mineralDrop = getRandomMineral();
-                    ItemEntity itemEntity = new ItemEntity(
-                            serverLevel,
-                            attacker.getX(), attacker.getY() + 1, attacker.getZ(),
-                            mineralDrop
-                    );
-                    itemEntity.setDeltaMovement(
-                            (RANDOM.nextFloat() - 0.5f) * 0.3f,
-                            RANDOM.nextFloat() * 0.5f,
-                            (RANDOM.nextFloat() - 0.5f) * 0.3f
-                    );
-                    serverLevel.addFreshEntity(itemEntity);
+                    int quantity = 1 + RANDOM.nextInt(5);
+                    for (int i = 0; i < quantity; i++) {
+                        ItemStack mineralDrop = getRandomMineral();
+                        ItemEntity itemEntity = new ItemEntity(
+                                serverLevel,
+                                attacker.getX(), attacker.getY() + 1, attacker.getZ(),
+                                mineralDrop
+                        );
+                        itemEntity.setDeltaMovement(
+                                (RANDOM.nextFloat() - 0.5f) * 0.3f,
+                                RANDOM.nextFloat() * 0.5f,
+                                (RANDOM.nextFloat() - 0.5f) * 0.3f
+                        );
+                        serverLevel.addFreshEntity(itemEntity);
+                    }
                 }
             }
         }
@@ -721,17 +783,42 @@ public class ModEventHandlers {
             // If defender HAS Fishball, don't transfer its damage to others
         }
 
-        // --- 13. 坚韧 Toughness: When shield broken, gain temporary armor/toughness ---
+        // --- 13. 坚韧 Toughness: When shield is about to break, gain +20 armor and +20 toughness temporarily ---
         int toughnessLevel = getEnchantmentLevel(defender, ModEnchantments.TOUGHNESS);
         if (toughnessLevel > 0) {
-            // Note: Max 49% durability loss per hit on shield requires a Mixin
-            // on ItemStack.hurt() or ShieldItem usage.
-            // Check if defender is using a shield and it just broke
             if (defender.isUsingItem() && defender.getUseItem().is(Items.SHIELD)) {
                 ItemStack shield = defender.getUseItem();
                 if (shield.getDamageValue() >= shield.getMaxDamage() - 1) {
-                    // Shield about to break - apply temporary armor and toughness
-                    defender.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 200, 1)); // ~20% damage reduction
+                    // Shield about to break - apply +20 armor and +20 toughness for 10 seconds
+                    CompoundTag data = getEntityData(defender);
+                    if (!data.getBoolean("zhonz_toughness_triggered")) {
+                        data.putBoolean("zhonz_toughness_triggered", true);
+                        // Add Armor modifier (+20 armor = 80% damage reduction for armor)
+                        var armorAttr = defender.getAttribute(Attributes.ARMOR);
+                        if (armorAttr != null) {
+                            armorAttr.addTransientModifier(new AttributeModifier(
+                                    TOUGHNESS_ARMOR_MODIFIER, 20.0, AttributeModifier.Operation.ADD_VALUE
+                            ));
+                        }
+                        // Add Toughness modifier (+20 toughness)
+                        var toughnessAttr = defender.getAttribute(Attributes.ARMOR_TOUGHNESS);
+                        if (toughnessAttr != null) {
+                            toughnessAttr.addTransientModifier(new AttributeModifier(
+                                    TOUGHNESS_TOUGHNESS_MODIFIER, 20.0, AttributeModifier.Operation.ADD_VALUE
+                            ));
+                        }
+                        // Remove after 10 seconds
+                        if (defender.level() instanceof ServerLevel serverLevel) {
+                            serverLevel.getServer().tell(new net.minecraft.server.TickTask(200, () -> {
+                                var armor = defender.getAttribute(Attributes.ARMOR);
+                                if (armor != null) armor.removeModifier(TOUGHNESS_ARMOR_MODIFIER);
+                                var tough = defender.getAttribute(Attributes.ARMOR_TOUGHNESS);
+                                if (tough != null) tough.removeModifier(TOUGHNESS_TOUGHNESS_MODIFIER);
+                                CompoundTag d = getEntityData(defender);
+                                d.remove("zhonz_toughness_triggered");
+                            }));
+                        }
+                    }
                 }
             }
         }
@@ -801,7 +888,7 @@ public class ModEventHandlers {
                     ItemStack armor = entity.getItemBySlot(slot);
                     if (armor.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.DIVINE_PROTECTION)) > 0) {
                         event.setCanceled(true);
-                        entity.setHealth(entity.getMaxHealth() * 0.5f);
+                        entity.setHealth(entity.getMaxHealth());
                         entity.removeAllEffects();
                         entity.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 400, 1));
                         entity.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 400, 1));
@@ -938,9 +1025,9 @@ public class ModEventHandlers {
             }
         }
 
-        // --- 23. 先知的长鸣 Prophet's Call: Detect nearby hostiles, glow effect ---
-        int prophetsCallLevel = getEnchantmentLevel(player, ModEnchantments.PROPHETS_CALL);
-        if (prophetsCallLevel > 0) {
+        // --- 23. 先知的长鸣 Prophet's Call: Trigger when blowing goat horn ---
+        int prophetsCallLevel = getMainHandEnchantmentLevel(player, ModEnchantments.PROPHETS_CALL);
+        if (prophetsCallLevel > 0 && player.isUsingItem() && player.getUseItem().is(Items.GOAT_HORN)) {
             // Make nearby hostile entities glow and take 170% more damage
             double detectRange = 20.0 + prophetsCallLevel * 10.0;
             AABB box = player.getBoundingBox().inflate(detectRange);
@@ -948,13 +1035,11 @@ public class ModEventHandlers {
                     mob -> mob.isAlive() && mob.getTarget() == player);
             if (!hostiles.isEmpty()) {
                 for (Monster hostile : hostiles) {
-                    hostile.addEffect(new MobEffectInstance(MobEffects.GLOWING, 40, 0));
-                    // Store damage vulnerability in entity data
+                    hostile.addEffect(new MobEffectInstance(MobEffects.GLOWING, 80, 0));
                     CompoundTag hostileData = getEntityData(hostile);
                     hostileData.putBoolean(KEY_PROPHETS_CALL_ACTIVE, true);
-                    hostileData.putLong(KEY_PROPHETS_CALL_UNTIL, player.level().getGameTime() + 40);
+                    hostileData.putLong(KEY_PROPHETS_CALL_UNTIL, player.level().getGameTime() + 80);
                 }
-                // Notify player
                 if (tickCount % 40 == 0) {
                     player.displayClientMessage(
                             Component.translatable("enchantment.zhonz_more_enchantments.prophets_call.warning",
@@ -963,13 +1048,10 @@ public class ModEventHandlers {
                     );
                 }
             }
-            // Note: The 170% more damage effect requires checking in LivingDamageEvent
-            // when the target has Prophet's Call active. Currently handled via
-            // the KEY_PROPHETS_CALL_ACTIVE flag checked below.
         }
 
-        // --- 26. 假面的愚者 Fools Mask: Update lucky/unlucky state ---
-        int foolsMaskLevel = getEnchantmentLevel(player, ModEnchantments.FOOLS_MASK);
+        // --- 26. 假面的愚者 Fools Mask: Update lucky/unlucky state (helmet slot only) ---
+        int foolsMaskLevel = getSlotEnchantmentLevel(player, ModEnchantments.FOOLS_MASK, EquipmentSlot.HEAD);
         if (foolsMaskLevel > 0) {
             CompoundTag foolsData = data;
             int changeTick = foolsData.contains(KEY_FOOLS_MASK_CHANGE_TICK) ? foolsData.getInt(KEY_FOOLS_MASK_CHANGE_TICK) : 0;
@@ -1022,6 +1104,35 @@ public class ModEventHandlers {
             }
         }
 
+        // --- 8. 鱼丸 Fishball: Durability regeneration (10x effective durability) + absorption ---
+        int fishballLevel = getEnchantmentLevel(player, ModEnchantments.FISHBALL);
+        if (fishballLevel > 0) {
+            // Every 2 seconds, regen Fishball item durability
+            if (tickCount % 40 == 0) {
+                for (EquipmentSlot slot : new EquipmentSlot[]{EquipmentSlot.CHEST, EquipmentSlot.OFFHAND}) {
+                    ItemStack fishballStack = player.getItemBySlot(slot);
+                    if (fishballStack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.FISHBALL)) > 0
+                            && fishballStack.isDamageableItem()) {
+                        int currentDurability = fishballStack.getMaxDamage() - fishballStack.getDamageValue();
+                        if (currentDurability < fishballStack.getMaxDamage()) {
+                            // Regen 1 durability every 2 seconds = effectively 10x durability
+                            fishballStack.setDamageValue(Math.max(0, fishballStack.getDamageValue() - 1));
+                        }
+                    }
+                }
+                // Also regen from inventory
+                for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+                    ItemStack stack = player.getInventory().getItem(i);
+                    if (stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.FISHBALL)) > 0
+                            && stack.isDamageableItem()) {
+                        if (stack.getDamageValue() > 0) {
+                            stack.setDamageValue(Math.max(0, stack.getDamageValue() - 1));
+                        }
+                    }
+                }
+            }
+        }
+
         // --- 28. 神咒 Divine Curse: Durability decreases 1% per second, halve attributes ---
         int divineCurseLevel = getEnchantmentLevel(player, ModEnchantments.DIVINE_CURSE);
         if (divineCurseLevel > 0) {
@@ -1045,6 +1156,23 @@ public class ModEventHandlers {
             // and doubling of charge speed/cooldown requires Mixin support with attribute modifiers.
         }
 
+        // --- 25. 爆裂黎明 Explosive Dawn: Invincibility during crossbow reload ---
+        int explosiveDawnLevel = getMainHandEnchantmentLevel(player, ModEnchantments.EXPLOSIVE_DAWN);
+        if (explosiveDawnLevel > 0 && player.isUsingItem() && player.getUseItem().is(Items.CROSSBOW)) {
+            CompoundTag edData = getEntityData(player);
+            if (edData.getBoolean(KEY_EXPLOSIVE_DAWN_RELOADING)) {
+                // During reload: grant invincibility (Resistance V = 100% damage reduction)
+                player.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 4, false, false));
+                // If crossbow is fully loaded, reset the reloading flag
+                if (!player.getUseItem().is(Items.CROSSBOW)) {
+                    edData.putBoolean(KEY_EXPLOSIVE_DAWN_RELOADING, false);
+                }
+            }
+        } else if (getEntityData(player).getBoolean(KEY_EXPLOSIVE_DAWN_RELOADING)) {
+            // Reload complete
+            getEntityData(player).putBoolean(KEY_EXPLOSIVE_DAWN_RELOADING, false);
+        }
+
         // --- 32. 必须开辟的通路 Must Open Path: Water effect around mace wielder ---
         int mustOpenPathLevel = getMainHandEnchantmentLevel(player, ModEnchantments.MUST_OPEN_PATH);
         if (mustOpenPathLevel > 0) {
@@ -1058,17 +1186,27 @@ public class ModEventHandlers {
             // requires a Mixin on MaceItem or a custom item interaction handler.
         }
 
-        // --- 33. 不完整的预知眼 Incomplete Foreknowledge Eye: Detect nearby hostiles ---
+        // --- 33. 不完整的预知眼 Incomplete Foreknowledge Eye: Regenerate dodge probability ---
         int foreknowledgeEyeLevel = getSlotEnchantmentLevel(player, ModEnchantments.INCOMPLETE_FOREKNOWLEDGE_EYE, EquipmentSlot.HEAD);
         if (foreknowledgeEyeLevel > 0) {
-            // Every 3 seconds, detect hostiles within 16 blocks and make them glow briefly
-            if (tickCount % 60 == 0) {
-                double detectRange = 16.0;
-                AABB box = player.getBoundingBox().inflate(detectRange);
-                List<Monster> hostiles = player.level().getEntitiesOfClass(Monster.class, box, mob -> mob.isAlive());
-                for (Monster hostile : hostiles) {
-                    hostile.addEffect(new MobEffectInstance(MobEffects.GLOWING, 60, 0));
+            CompoundTag eyeData = getEntityData(player);
+            long lastCombat = eyeData.contains(KEY_FOREKNOWLEDGE_LAST_COMBAT) ? eyeData.getLong(KEY_FOREKNOWLEDGE_LAST_COMBAT) : 0;
+            long currentTick = player.level().getGameTime();
+            long combatFreeTicks = currentTick - lastCombat;
+
+            // Regenerate 1% per second when not in combat (80 seconds without interaction)
+            if (combatFreeTicks > 1600) { // 80 seconds = 1600 ticks
+                float currentProb = eyeData.contains(KEY_FOREKNOWLEDGE_DODGE) ? eyeData.getFloat(KEY_FOREKNOWLEDGE_DODGE) : 0.80f;
+                if (currentProb < 0.80f) {
+                    float newProb = Math.min(0.80f, currentProb + 0.01f);
+                    eyeData.putFloat(KEY_FOREKNOWLEDGE_DODGE, newProb);
                 }
+            }
+
+            // Screen blur when dodge probability is below 20%
+            float dodgeProb = eyeData.contains(KEY_FOREKNOWLEDGE_DODGE) ? eyeData.getFloat(KEY_FOREKNOWLEDGE_DODGE) : 0.80f;
+            if (dodgeProb < 0.20f && tickCount % 40 == 0) {
+                player.addEffect(new MobEffectInstance(MobEffects.CONFUSION, 40, 0, false, false));
             }
         }
 

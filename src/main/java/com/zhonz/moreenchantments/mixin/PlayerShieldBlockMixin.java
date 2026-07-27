@@ -43,16 +43,13 @@ public abstract class PlayerShieldBlockMixin {
     private static final double TOUGHNESS_BONUS_AMOUNT = 20.0;
 
     /**
-     * Player.disableShield(boolean) - 在被斧头攻击时调用
+     * Player.disableShield() - 在被斧头攻击时调用
      * 通过注入这个方法,当disableShield触发时,检查玩家格挡的盾是否有坚韧附魔
      */
     @Inject(method = "disableShield", at = @At("HEAD"))
-    private void onDisableShield(boolean axe, CallbackInfo ci) {
+    private void onDisableShield(CallbackInfo ci) {
         Player self = (Player)(Object)this;
         if (self.level().isClientSide()) return;
-
-        // 只在axe attack导致的disableShield时触发
-        if (!axe) return;
 
         // 检查玩家是否在格挡
         if (!self.isUsingItem()) return;

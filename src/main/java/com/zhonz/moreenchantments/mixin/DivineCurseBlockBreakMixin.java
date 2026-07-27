@@ -50,8 +50,8 @@ public abstract class DivineCurseBlockBreakMixin {
     }
 
     /**
-     * Shadow the player field
+     * Shadow the player field from ServerPlayerGameMode
      */
     @org.spongepowered.asm.mixin.Shadow
-    public Player player;
+    protected net.minecraft.server.level.ServerPlayer player;
 }

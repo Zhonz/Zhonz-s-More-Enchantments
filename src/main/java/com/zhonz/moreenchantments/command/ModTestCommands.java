@@ -181,7 +181,10 @@ public class ModTestCommands {
         livingTarget.invulnerableTime = 0;
         livingTarget.hurtTime = 0;
         float oldHealth = livingTarget.getHealth();
-        boolean result = livingTarget.hurt(context.getSource().getLevel().damageSources().magic(), (float) amount);
+        // Use genericKill damage source instead of magic - magic is ineffective against undead
+        ServerLevel level = context.getSource().getLevel();
+        FakePlayer fakePlayer = FakePlayerFactory.getMinecraft(level);
+        boolean result = livingTarget.hurt(level.damageSources().playerAttack(fakePlayer), (float) amount);
         float newHealth = livingTarget.getHealth();
         context.getSource().sendSuccess(() -> Component.literal(
                 String.format("Damaged %s: %.1f -> %.1f (took %.1f damage, success=%b)",

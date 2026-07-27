@@ -28,21 +28,19 @@ import static com.zhonz.moreenchantments.ZhonzMoreEnchantments.MODID;
  * When an item with Toughness is about to take durability damage, the single damage
  * event is capped at 49% of the item's max durability.
  *
- * Also: When the Toughness item is a shield, axe-shield-break or zero-durability events
- * grant +20 armor and +20 toughness attribute modifiers temporarily.
+ * Also: When the Toughness shield is broken, +20 armor and +20 toughness
+ * attribute modifiers are applied temporarily.
  */
 @Mixin(ItemStack.class)
 public class ItemStackDurabilityMixin {
 
     private static final String SHIELD_BROKEN_TICK_KEY = "zhonz_toughness_shield_broken_tick";
-    /** 坚韧触发后属性修饰符持续时间(Ticks): 20秒 = 400 ticks. */
     private static final int TOUGHNESS_BONUS_DURATION_TICKS = 400;
-    /** 坚韧附魔给予的护甲/韧性加成值. */
     private static final double TOUGHNESS_BONUS_AMOUNT = 20.0;
 
     /**
-     * Modify the amount of durability damage taken.
-     * Called by {@code ItemStack.hurtAndBreak(int, LivingEntity, EquipmentSlot)}.
+     * Modify the amount of durability damage taken and handle shield-break bonus.
+     * Target: hurtAndBreak(int, LivingEntity, EquipmentSlot)
      */
     @Inject(method = "hurtAndBreak(ILnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/entity/EquipmentSlot;)V",
             at = @At("HEAD"), cancellable = true)
@@ -51,7 +49,6 @@ public class ItemStackDurabilityMixin {
         ItemStack self = (ItemStack)(Object)this;
         if (!self.isDamageableItem()) return;
 
-        // 检查坚韧附魔
         int toughnessLevel = self.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.TOUGHNESS));
         if (toughnessLevel <= 0) return;
 
@@ -65,47 +62,35 @@ public class ItemStackDurabilityMixin {
             amount = maxSingleDamage;
         }
 
-        // 如果剩余耐久<amount但大于限制,不能一次扣光
+        // 不能一次扣光剩余耐久
         if (amount > remainingDurability) {
             amount = remainingDurability;
         }
 
         // 直接修改耐久
-        self.setDamageValue(currentDamage + amount);
+        int newDamage = currentDamage + amount;
+        self.setDamageValue(newDamage);
+
+        // 检查盾是否被破（耐久归零或接近归零）
+        if (self.is(Items.SHIELD) && newDamage >= maxDamage - 1) {
+            triggerShieldBreakBonus(entity);
+        }
 
         ci.cancel();
     }
 
-    /**
-     * 当盾被破时（无论是耐久归零还是被斧头破盾）触发+20护甲/韧性奖励
-     */
-    @Inject(method = "hurtAndBreak(ILnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/entity/EquipmentSlot;)V",
-            at = @At("TAIL"))
-    private void onShieldBreak(int amount, LivingEntity entity, EquipmentSlot slot, CallbackInfo ci) {
-        if (entity == null) return;
-        ItemStack self = (ItemStack)(Object)this;
-
-        // 只对盾生效
-        if (!self.is(Items.SHIELD)) return;
-
-        int toughnessLevel = self.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.TOUGHNESS));
-        if (toughnessLevel <= 0) return;
-
-        // 触发条件：耐久归零或被破坏
-        if (self.getDamageValue() < self.getMaxDamage() - 1) return;
+    private static void triggerShieldBreakBonus(LivingEntity entity) {
+        if (entity == null || entity.level().isClientSide()) return;
 
         CompoundTag data = EntityDataStorage.getEntityData(entity);
         long currentTick = entity.level().getGameTime();
         long lastTriggered = data.contains(SHIELD_BROKEN_TICK_KEY) ? data.getLong(SHIELD_BROKEN_TICK_KEY) : -1;
 
-        // 防止重复触发
         if (lastTriggered == currentTick) return;
         data.putLong(SHIELD_BROKEN_TICK_KEY, currentTick);
 
-        // 添加+20护甲和+20韧性的临时属性修饰符
         applyToughnessBonus(entity, TOUGHNESS_BONUS_AMOUNT);
 
-        // 20秒后移除属性修饰符
         if (entity.level() instanceof ServerLevel serverLevel) {
             serverLevel.getServer().tell(new TickTask(TOUGHNESS_BONUS_DURATION_TICKS, () -> {
                 if (entity.isAlive()) {

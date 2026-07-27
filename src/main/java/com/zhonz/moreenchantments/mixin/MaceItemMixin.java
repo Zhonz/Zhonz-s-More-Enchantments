@@ -11,11 +11,10 @@ import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.MaceItem;
 import net.minecraft.world.level.Level;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -28,7 +27,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *  - When it hits a block or entity, deal 1000% damage and teleport the thrower to the hit location
  *  - 5 second cooldown (like a shield)
  */
-@Mixin(MaceItem.class)
+@Mixin(Item.class)
 public abstract class MaceItemMixin {
 
     private static final String KEY_MUST_OPEN_PATH_CD = "zhonz_must_open_path_cd";
@@ -44,14 +43,14 @@ public abstract class MaceItemMixin {
     /** 投掷后消耗的耐久值. */
     private static final int THROW_DURABILITY_COST = 3;
 
-    @Shadow public abstract int getUseDuration(ItemStack stack, LivingEntity entity);
-
     /**
      * Right-click to start charging the mace like a trident.
      */
     @Inject(method = "use", at = @At("HEAD"), cancellable = true)
     private void onUse(Level level, Player player, InteractionHand hand, CallbackInfoReturnable<InteractionResultHolder<ItemStack>> cir) {
         ItemStack stack = player.getItemInHand(hand);
+        // Only applies to Mace items with the Must Open Path enchantment
+        if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
         int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
         if (mustOpenPathLevel <= 0) return;
 
@@ -69,6 +68,7 @@ public abstract class MaceItemMixin {
     @Inject(method = "onUseTick", at = @At("TAIL"))
     private void onUseTick(Level level, LivingEntity entity, ItemStack stack, int remainingUseDuration, CallbackInfo ci) {
         if (!(entity instanceof Player player)) return;
+        if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
         int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
         if (mustOpenPathLevel <= 0) return;
 
@@ -82,6 +82,7 @@ public abstract class MaceItemMixin {
     @Inject(method = "releaseUsing", at = @At("HEAD"), cancellable = true)
     private void onReleaseUsing(ItemStack stack, Level level, LivingEntity entity, int timeLeft, CallbackInfo ci) {
         if (!(entity instanceof Player player)) return;
+        if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
         int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
         if (mustOpenPathLevel <= 0) return;
 

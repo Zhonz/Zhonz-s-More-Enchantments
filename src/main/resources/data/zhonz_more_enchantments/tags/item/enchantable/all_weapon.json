@@ -1,7 +1,8 @@
 {
     "values": [
         "#minecraft:enchantable/sword",
-        "#minecraft:enchantable/axe",
+        "#minecraft:enchantable/sharp_weapon",
+        "#minecraft:enchantable/mace",
         "#minecraft:enchantable/bow",
         "#minecraft:enchantable/crossbow",
         "#minecraft:enchantable/trident"

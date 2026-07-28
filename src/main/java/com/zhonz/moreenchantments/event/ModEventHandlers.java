@@ -34,7 +34,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
-import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent.Post;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -379,6 +379,7 @@ public class ModEventHandlers {
         amount = applyCharger(attacker, amount);
         amount = applyLiberator(attacker, amount);
         amount = applySupremeArtDamage(attacker, amount);
+        amount = applyArmyBreaker(attacker, defender, amount);
         amount = applyMySeaDomainDamage(attacker, defender, amount);
         applyAreaStrike(attacker, defender, source, mainHand, amount);
         applySelfDoubt(attacker, defender);
@@ -415,9 +416,13 @@ public class ModEventHandlers {
     private static float applyLiberator(LivingEntity attacker, float amount) {
         int liberatorLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.LIBERATOR);
         if (liberatorLevel <= 0) return amount;
-        CompoundTag data = getEntityData(attacker);
+        // Use EntityDataStorage WeakHashMap instead of persistent data to avoid stale values
+        // from singleton FakePlayer across test runs.
+        CompoundTag data = EntityDataStorage.getData(attacker);
         long currentTick = attacker.level().getGameTime();
-        long elapsedTicks = currentTick - data.getLong(KEY_LIBERATOR_LAST_ATTACK);
+        long lastAttackTick = data.getLong(KEY_LIBERATOR_LAST_ATTACK);
+        // If never attacked before (e.g. just equipped), treat as 0 seconds elapsed
+        long elapsedTicks = lastAttackTick == 0 ? 0 : currentTick - lastAttackTick;
         double elapsedSeconds = elapsedTicks / 20.0;
 
         float multiplier;
@@ -429,16 +434,27 @@ public class ModEventHandlers {
             multiplier = 0.1f + (20.0f - 0.1f) * (float) ((elapsedSeconds - 5.0) / (400.0 - 5.0));
         }
         data.putLong(KEY_LIBERATOR_LAST_ATTACK, currentTick);
-        if (LOGGER.isDebugEnabled()) {
-            LOGGER.debug("[Liberator] elapsed={}s, multiplier={}, amount={} -> {}",
-                    String.format("%.1f", elapsedSeconds), multiplier, amount, amount * multiplier);
-        }
+        // Always log at INFO so we can see this in production logs
+        LOGGER.info("[Liberator] attacker={}, lastTick={}, currTick={}, elapsed={}s, multiplier={}, amount={} -> {}",
+                attacker.getName().getString(), lastAttackTick, currentTick,
+                String.format("%.1f", elapsedSeconds), multiplier, amount, amount * multiplier);
         return amount * multiplier;
     }
 
     private static float applySupremeArtDamage(LivingEntity attacker, float amount) {
         int supremeArtLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.SUPREME_ART);
         return supremeArtLevel > 0 ? amount * (1.0f + 0.2f * supremeArtLevel) : amount;
+    }
+
+    private static float applyArmyBreaker(LivingEntity attacker, LivingEntity defender, float amount) {
+        int armyBreakerLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.ARMY_BREAKER);
+        if (armyBreakerLevel <= 0) return amount;
+        float threshold = armyBreakerLevel == 1 ? 0.30f : (armyBreakerLevel == 2 ? 0.40f : 0.50f);
+        float bonus = armyBreakerLevel == 1 ? 0.10f : (armyBreakerLevel == 2 ? 0.20f : 0.30f);
+        if (defender.getHealth() <= defender.getMaxHealth() * threshold) {
+            return amount * (1.0f + bonus);
+        }
+        return amount;
     }
 
     private static float applyMySeaDomainDamage(LivingEntity attacker, LivingEntity defender, float amount) {
@@ -812,7 +828,7 @@ public class ModEventHandlers {
     // ===================================================================
 
     @SubscribeEvent
-    public static void onPlayerTick(PlayerTickEvent.Post event) {
+    public static void onPlayerTick(Post event) {
         Player player = event.getEntity();
         if (player.level().isClientSide()) return;
 

@@ -1,0 +1,22 @@
+--------------------------------------------------------------------------------
+
+Command-Line:
+ - /root/.local/share/mise/installs/java/25.0.2/bin/java
+ - -jar
+ - /root/.gradle/caches/neoformruntime/artifacts/net/neoforged/installertools/binarypatcher/2.1.2/binarypatcher-2.1.2-fatjar.jar
+ - --clean
+ - /root/.gradle/caches/neoformruntime/intermediate_results/rename_e0c3cbd66f99e24b7d77d50b6cb5902aabb1e40b_output.jar
+ - --output
+ - ./output.jar
+ - --apply
+ - ./joined.lzma
+--------------------------------------------------------------------------------
+
+Applying: 
+  Clean:     /root/.gradle/caches/neoformruntime/intermediate_results/rename_e0c3cbd66f99e24b7d77d50b6cb5902aabb1e40b_output.jar
+  Output:    /workspace/build/tmp/neoformruntime/20260728-051439_binaryPatch/./output.jar
+  KeepData:  false
+  Unpatched: false
+  Pack200:   false
+  Legacy:    false
+Loading patches file: ./joined.lzma

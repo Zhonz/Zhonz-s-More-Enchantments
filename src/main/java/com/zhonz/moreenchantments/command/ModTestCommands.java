@@ -20,6 +20,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantment;
@@ -181,10 +182,10 @@ public class ModTestCommands {
         livingTarget.invulnerableTime = 0;
         livingTarget.hurtTime = 0;
         float oldHealth = livingTarget.getHealth();
-        // Use genericKill damage source instead of magic - magic is ineffective against undead
+        // Use generic damage source to avoid any attacker-based enchantment side-effects
+        // from previously-equipped weapons on the singleton FakePlayer.
         ServerLevel level = context.getSource().getLevel();
-        FakePlayer fakePlayer = FakePlayerFactory.getMinecraft(level);
-        boolean result = livingTarget.hurt(level.damageSources().playerAttack(fakePlayer), (float) amount);
+        boolean result = livingTarget.hurt(level.damageSources().generic(), (float) amount);
         float newHealth = livingTarget.getHealth();
         context.getSource().sendSuccess(() -> Component.literal(
                 String.format("Damaged %s: %.1f -> %.1f (took %.1f damage, success=%b)",
@@ -201,6 +202,7 @@ public class ModTestCommands {
         }
 
         var enchantId = ResourceLocationArgument.getId(context, "enchant");
+        String enchantPath = enchantId.getPath();
         int level = IntegerArgumentType.getInteger(context, "level");
         Holder<Enchantment> enchantHolder = resolveEnchant(context);
         if (enchantHolder == null) return 0;
@@ -209,9 +211,55 @@ public class ModTestCommands {
         FakePlayer fakePlayer = FakePlayerFactory.getMinecraft(levelObj);
         fakePlayer.setPos(target.getX(), target.getY(), target.getZ());
 
-        ItemStack sword = new ItemStack(Items.DIAMOND_SWORD);
-        sword.enchant(enchantHolder, level);
-        fakePlayer.setItemSlot(EquipmentSlot.MAINHAND, sword);
+        // Clear stale enchantment-related data from the singleton FakePlayer
+        // so that time-based enchantments (e.g. Liberator) start from a clean state.
+        net.minecraft.nbt.CompoundTag fakeData = fakePlayer.getPersistentData();
+        java.util.List<String> keysToRemove = new java.util.ArrayList<>();
+        for (String key : fakeData.getAllKeys()) {
+            if (key.startsWith("zhonz_")) {
+                keysToRemove.add(key);
+            }
+        }
+        for (String key : keysToRemove) {
+            fakeData.remove(key);
+        }
+        // Also clear WeakHashMap data used by some enchantments (e.g. Liberator)
+        // For Liberator, we must preserve the last-attack timestamp so that
+        // consecutive test calls can measure elapsed time correctly.
+        boolean hadData = com.zhonz.moreenchantments.event.EntityDataStorage.hasData(fakePlayer);
+        if (!enchantPath.equals("liberator")) {
+            com.zhonz.moreenchantments.event.EntityDataStorage.removeData(fakePlayer);
+        } else {
+            // Preserve liberator timestamp; clear everything else
+            net.minecraft.nbt.CompoundTag edData = com.zhonz.moreenchantments.event.EntityDataStorage.getData(fakePlayer);
+            long lastAttack = edData.getLong("zhonz_liberator_last_attack");
+            java.util.List<String> edKeys = new java.util.ArrayList<>(edData.getAllKeys());
+            for (String k : edKeys) {
+                if (!k.equals("zhonz_liberator_last_attack")) {
+                    edData.remove(k);
+                }
+            }
+            if (lastAttack != 0) {
+                edData.putLong("zhonz_liberator_last_attack", lastAttack);
+            }
+        }
+        LOGGER.info("[TestCommand] Cleared EntityDataStorage for FakePlayer: hadData={}, keysRemoved={}", hadData, keysToRemove.size());
+
+        // 根据附魔类型自动选择合适的武器
+        Item weaponItem = Items.DIAMOND_SWORD;
+        if (enchantPath.equals("area_strike") || enchantPath.equals("explosive_dawn") || enchantPath.equals("my_sea_domain")) {
+            weaponItem = Items.BOW;
+        } else if (enchantPath.equals("suppression")) {
+            weaponItem = Items.TRIDENT;
+        } else if (enchantPath.equals("finale") || enchantPath.equals("charger") || enchantPath.equals("liberator")
+                || enchantPath.equals("supreme_art") || enchantPath.equals("blood_weep") || enchantPath.equals("shell_strip")
+                || enchantPath.equals("army_breaker") || enchantPath.equals("harvest") || enchantPath.equals("must_open_path")) {
+            weaponItem = Items.DIAMOND_SWORD;
+        }
+
+        ItemStack weapon = new ItemStack(weaponItem);
+        weapon.enchant(enchantHolder, level);
+        fakePlayer.setItemSlot(EquipmentSlot.MAINHAND, weapon);
 
         // 设置假玩家的攻击伤害属性
         var attr = fakePlayer.getAttribute(Attributes.ATTACK_DAMAGE);
@@ -220,11 +268,9 @@ public class ModTestCommands {
         }
 
         // 验证假玩家装备
-        if (LOGGER.isDebugEnabled()) {
-            ItemStack mainHand = fakePlayer.getMainHandItem();
-            LOGGER.debug("[TestCommand] FakePlayer mainHand: {} (enchant level: {}, expected: {})",
-                    mainHand.getItem(), mainHand.getEnchantmentLevel(enchantHolder), level);
-        }
+        ItemStack mainHand = fakePlayer.getMainHandItem();
+        LOGGER.info("[TestCommand] FakePlayer mainHand: {} (enchant level: {}, expected: {})",
+                mainHand.getItem(), mainHand.getEnchantmentLevel(enchantHolder), level);
 
         float oldHealth = livingTarget.getHealth();
         livingTarget.invulnerableTime = 0;

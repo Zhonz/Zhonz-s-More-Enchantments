@@ -1,0 +1,24 @@
+--------------------------------------------------------------------------------
+
+Command-Line:
+ - /root/.local/share/mise/installs/java/25.0.2/bin/java
+ - --sun-misc-unsafe-memory-access=allow
+ - -jar
+ - /root/.gradle/caches/modules-2/files-2.1/net.neoforged.installertools/installertools/4.0.12/94b6e47c3f51f8ca40f8c54720369a952b821e95/installertools-4.0.12-fatjar.jar
+ - --task
+ - PROCESS_MINECRAFT_JAR
+ - --input
+ - /root/.gradle/caches/neoformruntime/intermediate_results/copyUnpatchedClasses_cc5486ada408a5032b5f5387143c0003a186d21f_output.jar
+ - --output
+ - ./output.jar
+ - --no-mod-manifest
+ - --access-transformer
+ - ats/accesstransformer.cfg
+--------------------------------------------------------------------------------
+
+Task: PROCESS_MINECRAFT_JAR
+load access transformers [28ms]
+load input zip [369ms]
+apply dev transforms [314ms]
+write output file [1590ms]
+overall work [2322ms]

@@ -41,12 +41,15 @@ base {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
 neoForge {
-    version = project.neo_version
+    enable {
+        version = project.neo_version
+        disableRecompilation = true
+    }
     parchment {
         mappingsVersion = project.parchment_mappings_version
         minecraftVersion = project.parchment_minecraft_version
@@ -124,6 +127,18 @@ publishing {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 21
+}
+
+def javaPath = file(System.getProperty('java.home')).toPath().resolve('bin').resolve('java').toFile().absolutePath
+
+afterEvaluate {
+    tasks.matching { it.name == 'createMinecraftArtifacts' }.configureEach {
+        javaExecutable.set(javaPath)
+        toolsJavaExecutable.set(javaPath)
+    }
+    tasks.matching { it.name == 'downloadAssets' }.configureEach {
+        javaExecutable.set(javaPath)
+    }
 }
 
 idea {

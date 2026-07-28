@@ -312,6 +312,10 @@ public class ModEventHandlers {
         float dodgeProb = data.contains(KEY_FOREKNOWLEDGE_DODGE) ? data.getFloat(KEY_FOREKNOWLEDGE_DODGE) : 0.80f;
         data.putLong(KEY_FOREKNOWLEDGE_LAST_COMBAT, defender.level().getGameTime());
 
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[ForeknowledgeEye] Check dodgeProb={}, entity={}", dodgeProb, defender.getName().getString());
+        }
+
         if (RANDOM.nextFloat() >= dodgeProb) {
             float newProb = Math.max(0.05f, dodgeProb - 0.10f);
             data.putFloat(KEY_FOREKNOWLEDGE_DODGE, newProb);

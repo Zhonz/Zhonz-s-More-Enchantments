@@ -67,6 +67,9 @@ def extract_dmg(response):
     match = re.search(r'\((\d+\.\d+) dmg\)', response)
     if match:
         return float(match.group(1))
+    match = re.search(r'(\d+\.\d+) dmg\)', response)
+    if match:
+        return float(match.group(1))
     return None
 
 

@@ -6,9 +6,13 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
+import com.zhonz.moreenchantments.event.ModEventHandlers;
 import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -30,6 +34,7 @@ import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.commands.arguments.ResourceLocationArgument;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.item.component.CustomData;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.util.FakePlayer;
 import net.neoforged.neoforge.common.util.FakePlayerFactory;
@@ -113,9 +118,29 @@ public class ModTestCommands {
                                         )
                                 )
                         )
+
+                        // === 血路拓成坦途 测试：给主手武器设置指定生物类型的击杀数 ===
+                        .then(Commands.literal("bloodpath")
+                                .then(Commands.argument("mobType", StringArgumentType.string())
+                                        .then(Commands.argument("kills", IntegerArgumentType.integer(0, 1000000))
+                                                .executes(ModTestCommands::setBloodPathKills)
+                                        )
+                                )
+                        )
         );
 
-        LOGGER.info("[TestCommands] Registered /zhonztest command");
+        // === 独立命令: bloodpathtest <mobType> <kills> ===
+        dispatcher.register(
+                Commands.literal("bloodpathtest")
+                        .requires(source -> source.hasPermission(2))
+                        .then(Commands.argument("mobType", StringArgumentType.string())
+                                .then(Commands.argument("kills", IntegerArgumentType.integer(0, 1000000))
+                                        .executes(ModTestCommands::setBloodPathKills)
+                                )
+                        )
+        );
+
+        LOGGER.info("[TestCommands] Registered /zhonztest command and /bloodpathtest command");
     }
 
     @SubscribeEvent
@@ -437,6 +462,48 @@ public class ModTestCommands {
 
         context.getSource().sendSuccess(() -> Component.literal(
                 "Equipped " + slotName + " with " + enchantId + " " + level + " on " + player.getName().getString()
+        ), true);
+        return 1;
+    }
+
+    private static int setBloodPathKills(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        ServerPlayer player = context.getSource().getPlayerOrException();
+        String mobType = StringArgumentType.getString(context, "mobType");
+        int kills = IntegerArgumentType.getInteger(context, "kills");
+
+        ItemStack weapon = player.getMainHandItem();
+        if (weapon.isEmpty()) {
+            context.getSource().sendFailure(Component.literal("You must hold a weapon in your main hand!"));
+            return 0;
+        }
+
+        // 如果mobType不含冒号，自动补全 minecraft: 前缀
+        String mobKey = mobType.contains(":") ? mobType : "minecraft:" + mobType;
+
+        if (weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BLOOD_PATH)) <= 0) {
+            // 如果武器没有血路附魔，自动加上
+            weapon.enchant(ModEnchantments.getHolder(ModEnchantments.BLOOD_PATH), 1);
+        }
+
+        // 设置击杀计数
+        CustomData.update(DataComponents.CUSTOM_DATA, weapon, root -> {
+            final String BLOOD_PATH_TAG = "zhonz_blood_path_kills";
+            CompoundTag killsTag;
+            if (root.contains(BLOOD_PATH_TAG, CompoundTag.TAG_COMPOUND)) {
+                killsTag = root.getCompound(BLOOD_PATH_TAG);
+            } else {
+                killsTag = new CompoundTag();
+                root.put(BLOOD_PATH_TAG, killsTag);
+            }
+            killsTag.putInt(mobKey, kills);
+        });
+
+        int actualCount = ModEventHandlers.getBloodPathKillCount(weapon, mobKey);
+        float bonusPct = actualCount * 0.1f;
+        final String finalMobKey = mobKey;
+        context.getSource().sendSuccess(() -> Component.literal(
+                String.format("Set Blood Path kills for %s: %d (%.1f%% damage bonus). Weapon: %s",
+                        finalMobKey, actualCount, bonusPct, weapon.getItem())
         ), true);
         return 1;
     }

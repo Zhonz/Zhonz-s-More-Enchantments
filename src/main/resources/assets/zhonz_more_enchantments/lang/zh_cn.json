@@ -65,6 +65,8 @@
     "enchantment.zhonz_more_enchantments.must_open_path.desc": "重锤1000%伤害+传送到目标位置，5秒冷却",
     "enchantment.zhonz_more_enchantments.incomplete_foreknowledge_eye": "不完整的预知眼",
     "enchantment.zhonz_more_enchantments.incomplete_foreknowledge_eye.desc": "80%闪避攻击(每级-10%)，80秒无战斗后逐步恢复，低闪避率时视线模糊",
+    "enchantment.zhonz_more_enchantments.blood_path": "将血路拓成坦途",
+    "enchantment.zhonz_more_enchantments.blood_path.desc": "每击杀同种生物对其伤害永久+0.1%，铁砧合并时击杀计数相加",
 
     "enchantment.zhonz_more_enchantments.prophets_call.warning": "§c⚠ 检测到 %s 个敌对生物！"
 }

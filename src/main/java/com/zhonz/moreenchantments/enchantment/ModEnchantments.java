@@ -148,4 +148,7 @@ public class ModEnchantments {
 
     // 33. 不完整的预知眼 - Incomplete Foreknowledge Eye: Detect nearby hostiles.
     public static final ResourceKey<Enchantment> INCOMPLETE_FOREKNOWLEDGE_EYE = key("incomplete_foreknowledge_eye");
+
+    // 34. 将血路拓成坦途 - Blood Path: Per-kill-type damage bonus.
+    public static final ResourceKey<Enchantment> BLOOD_PATH = key("blood_path");
 }

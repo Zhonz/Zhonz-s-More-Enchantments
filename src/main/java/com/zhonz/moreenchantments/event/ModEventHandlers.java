@@ -3,6 +3,7 @@ package com.zhonz.moreenchantments.event;
 import com.zhonz.moreenchantments.command.ModTestCommands;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
 import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -18,6 +19,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -73,6 +75,7 @@ public class ModEventHandlers {
     private static final String KEY_DIVINE_CURSE_LAST_LEVEL = "zhonz_divine_curse_last_level";
     private static final String KEY_FOREKNOWLEDGE_DODGE = "zhonz_foreknowledge_dodge_prob";
     private static final String KEY_FOREKNOWLEDGE_LAST_COMBAT = "zhonz_foreknowledge_last_combat";
+    private static final String BLOOD_PATH_TAG = "zhonz_blood_path_kills"; // NBT CompoundTag on weapon, keys = mob type IDs, values = kill counts (int)
 
     // ===== Attribute Modifier ResourceLocations =====
     private static final String MOD_ID = "zhonz_more_enchantments";
@@ -395,6 +398,7 @@ public class ModEventHandlers {
         amount = applyFleetingGraceBonus(attacker, amount);
         applyFlippingCoin(attacker, defender);
         applyGrievousWound(attacker, defender);
+        amount = applyBloodPathBonus(attacker, defender, amount);
         return amount;
     }
 
@@ -632,6 +636,61 @@ public class ModEventHandlers {
         defender.addEffect(new MobEffectInstance(MobEffects.WITHER, 100, 1));
     }
 
+    private static float applyBloodPathBonus(LivingEntity attacker, LivingEntity defender, float amount) {
+        ItemStack weapon = attacker.getMainHandItem();
+        if (weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BLOOD_PATH)) <= 0) return amount;
+        String mobKey = getMobTypeId(defender);
+        int kills = getBloodPathKillCount(weapon, mobKey);
+        if (kills <= 0) return amount;
+        float multiplier = 1.0f + kills * 0.001f; // +0.1% per kill
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[BloodPath] mob={}, kills={}, multiplier={}, amount={} -> {}",
+                    mobKey, kills, multiplier, amount, amount * multiplier);
+        }
+        return amount * multiplier;
+    }
+
+    private static String getMobTypeId(LivingEntity entity) {
+        return EntityType.getKey(entity.getType()).toString(); // e.g. "minecraft:zombie"
+    }
+
+    public static int getBloodPathKillCount(ItemStack weapon, String mobKey) {
+        CustomData customData = weapon.get(DataComponents.CUSTOM_DATA);
+        if (customData == null) return 0;
+        CompoundTag root = customData.copyTag();
+        if (!root.contains(BLOOD_PATH_TAG, CompoundTag.TAG_COMPOUND)) return 0;
+        CompoundTag killsTag = root.getCompound(BLOOD_PATH_TAG);
+        return killsTag.contains(mobKey, CompoundTag.TAG_INT) ? killsTag.getInt(mobKey) : 0;
+    }
+
+    public static void incrementBloodPathKill(ItemStack weapon, String mobKey) {
+        CustomData.update(DataComponents.CUSTOM_DATA, weapon, root -> {
+            CompoundTag killsTag;
+            if (root.contains(BLOOD_PATH_TAG, CompoundTag.TAG_COMPOUND)) {
+                killsTag = root.getCompound(BLOOD_PATH_TAG);
+            } else {
+                killsTag = new CompoundTag();
+                root.put(BLOOD_PATH_TAG, killsTag);
+            }
+            int current = killsTag.contains(mobKey, CompoundTag.TAG_INT) ? killsTag.getInt(mobKey) : 0;
+            killsTag.putInt(mobKey, current + 1);
+        });
+    }
+
+    public static CompoundTag getBloodPathKillTag(ItemStack weapon) {
+        CustomData customData = weapon.get(DataComponents.CUSTOM_DATA);
+        if (customData == null) return new CompoundTag();
+        CompoundTag root = customData.copyTag();
+        if (!root.contains(BLOOD_PATH_TAG, CompoundTag.TAG_COMPOUND)) return new CompoundTag();
+        return root.getCompound(BLOOD_PATH_TAG);
+    }
+
+    public static void setBloodPathKillTag(ItemStack weapon, CompoundTag killCounts) {
+        CustomData.update(DataComponents.CUSTOM_DATA, weapon, root -> {
+            root.put(BLOOD_PATH_TAG, killCounts.copy());
+        });
+    }
+
     private static float applyDefenderEnchantments(LivingEntity defender, DamageSource source, float amount) {
         Entity attackerEntity = source.getEntity();
         applyDeepSeasGrace(defender, amount);
@@ -773,10 +832,26 @@ public class ModEventHandlers {
         LivingEntity entity = event.getEntity();
         if (entity.level().isClientSide()) return;
 
+        recordBloodPathKill(event.getSource(), entity);
+
         if (tryReturnFromHell(entity, event)) {
             return;
         }
         tryDivineProtection(entity, event);
+    }
+
+    private static void recordBloodPathKill(DamageSource source, LivingEntity victim) {
+        Entity srcEntity = source.getEntity();
+        if (!(srcEntity instanceof LivingEntity attacker)) return;
+        ItemStack weapon = attacker.getMainHandItem();
+        if (weapon.isEmpty()) return;
+        if (weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BLOOD_PATH)) <= 0) return;
+        String mobKey = getMobTypeId(victim);
+        incrementBloodPathKill(weapon, mobKey);
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[BloodPath] Recorded kill of {} (weapon={}, new count={})",
+                    mobKey, weapon.getItem(), getBloodPathKillCount(weapon, mobKey));
+        }
     }
 
     private static boolean tryReturnFromHell(LivingEntity entity, LivingDeathEvent event) {

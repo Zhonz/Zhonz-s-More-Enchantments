@@ -25,6 +25,7 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -834,10 +835,68 @@ public class ModEventHandlers {
 
         recordBloodPathKill(event.getSource(), entity);
 
+        if (trySmartTotem(entity, event)) {
+            return;
+        }
         if (tryReturnFromHell(entity, event)) {
             return;
         }
         tryDivineProtection(entity, event);
+    }
+
+    private static boolean trySmartTotem(LivingEntity entity, LivingDeathEvent event) {
+        if (!(entity instanceof Player player)) return false;
+        // 胸甲需有智能图腾附魔
+        ItemStack chest = player.getItemBySlot(EquipmentSlot.CHEST);
+        if (chest.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.SMART_TOTEM)) <= 0) return false;
+
+        // 如果主手或副手已有不死图腾，交给原版处理（避免重复消耗）
+        if (isTotem(player.getMainHandItem()) || isTotem(player.getOffhandItem())) return false;
+
+        // 在背包中寻找不死图腾
+        Inventory inv = player.getInventory();
+        int totemSlot = -1;
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            if (isTotem(inv.getItem(i))) {
+                totemSlot = i;
+                break;
+            }
+        }
+        if (totemSlot < 0) return false;
+
+        // 消耗一个不死图腾
+        ItemStack totem = inv.getItem(totemSlot);
+        totem.shrink(1);
+
+        // 触发不死图腾效果（与原版行为一致）
+        event.setCanceled(true);
+        player.setHealth(1.0f);
+        player.removeAllEffects();
+        player.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 900, 1));
+        player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, 100, 1));
+        player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 800, 0));
+        if (player.level() instanceof ServerLevel serverLevel) {
+            serverLevel.playSound(null, player.getX(), player.getY(), player.getZ(),
+                    SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 1.0f);
+            // 向附近玩家发送使用图腾的粒子效果
+            for (var p : serverLevel.players()) {
+                if (p.distanceToSqr(player) < 64.0) {
+                    ((net.minecraft.server.level.ServerPlayer) p).connection.send(
+                            new net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket(
+                                    net.minecraft.core.particles.ParticleTypes.TOTEM_OF_UNDYING, true,
+                                    player.getX(), player.getY() + 1.0, player.getZ(),
+                                    0.0f, 0.0f, 0.0f, 0.1f, 30));
+                }
+            }
+        }
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[SmartTotem] Consumed totem from inventory slot {} for {}", totemSlot, player.getName().getString());
+        }
+        return true;
+    }
+
+    private static boolean isTotem(ItemStack stack) {
+        return !stack.isEmpty() && stack.is(Items.TOTEM_OF_UNDYING);
     }
 
     private static void recordBloodPathKill(DamageSource source, LivingEntity victim) {

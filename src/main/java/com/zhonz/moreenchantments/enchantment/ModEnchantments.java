@@ -151,4 +151,7 @@ public class ModEnchantments {
 
     // 34. 将血路拓成坦途 - Blood Path: Per-kill-type damage bonus.
     public static final ResourceKey<Enchantment> BLOOD_PATH = key("blood_path");
+
+    // 35. 智能图腾 - Smart Totem: Totem of Undying works from inventory when chest enchanted.
+    public static final ResourceKey<Enchantment> SMART_TOTEM = key("smart_totem");
 }

@@ -65,6 +65,8 @@
     "enchantment.zhonz_more_enchantments.must_open_path.desc": "Mace: throw like trident, 1000% damage, teleport to target, 5s cooldown",
     "enchantment.zhonz_more_enchantments.incomplete_foreknowledge_eye": "Incomplete Foreknowledge Eye",
     "enchantment.zhonz_more_enchantments.incomplete_foreknowledge_eye.desc": "Periodically detect and reveal nearby hostile entities",
+    "enchantment.zhonz_more_enchantments.blood_path": "Blood Path",
+    "enchantment.zhonz_more_enchantments.blood_path.desc": "+0.1% damage per kill of same mob type (stacks), kill counts merged on anvil combine",
 
     "enchantment.zhonz_more_enchantments.prophets_call.warning": "§c⚠ Detected %s hostile entities!"
 }

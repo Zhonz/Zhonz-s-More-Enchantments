@@ -69,6 +69,10 @@
     "enchantment.zhonz_more_enchantments.blood_path.desc": "+0.1% damage per kill of same mob type (stacks), kill counts merged on anvil combine",
     "enchantment.zhonz_more_enchantments.smart_totem": "Smart Totem",
     "enchantment.zhonz_more_enchantments.smart_totem.desc": "Totem of Undying triggers from anywhere in inventory (not only main/offhand)",
+    "enchantment.zhonz_more_enchantments.flesh_sacrifice": "Flesh Sacrifice",
+    "enchantment.zhonz_more_enchantments.flesh_sacrifice.desc": "+30% incoming damage; transforms to Bone Break when hit",
+    "enchantment.zhonz_more_enchantments.bone_break": "Bone Break",
+    "enchantment.zhonz_more_enchantments.bone_break.desc": "+500% outgoing damage, -30% incoming damage, reverts after 3s",
 
     "enchantment.zhonz_more_enchantments.prophets_call.warning": "§c⚠ Detected %s hostile entities!"
 }

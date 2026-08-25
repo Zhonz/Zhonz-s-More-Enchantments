@@ -1,0 +1,21 @@
+{
+  "description": {
+    "translate": "enchantment.zhonz_more_enchantments.bone_break"
+  },
+  "supported_items": "#zhonz_more_enchantments:enchantable/all_weapon",
+  "weight": 1,
+  "max_level": 1,
+  "min_cost": {
+    "base": 999,
+    "per_level_above_first": 0
+  },
+  "max_cost": {
+    "base": 999,
+    "per_level_above_first": 0
+  },
+  "anvil_cost": 0,
+  "slots": ["mainhand"],
+  "is_treasure": true,
+  "is_discoverable": false,
+  "is_tradeable": false
+}

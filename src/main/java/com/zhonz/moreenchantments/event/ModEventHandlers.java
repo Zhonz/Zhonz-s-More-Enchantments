@@ -30,6 +30,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -77,6 +78,7 @@ public class ModEventHandlers {
     private static final String KEY_FOREKNOWLEDGE_DODGE = "zhonz_foreknowledge_dodge_prob";
     private static final String KEY_FOREKNOWLEDGE_LAST_COMBAT = "zhonz_foreknowledge_last_combat";
     private static final String BLOOD_PATH_TAG = "zhonz_blood_path_kills"; // NBT CompoundTag on weapon, keys = mob type IDs, values = kill counts (int)
+    private static final String KEY_BONE_BREAK_SWITCH_TICK = "zhonz_bone_break_switch_tick"; // tick when flesh→bone switch happened
 
     // ===== Attribute Modifier ResourceLocations =====
     private static final String MOD_ID = "zhonz_more_enchantments";
@@ -230,6 +232,24 @@ public class ModEventHandlers {
             // 倏忽恩赐: fall through only when foreknowledge eye did not trigger
             recordFleetingGrace(defender, rawDamage);
         }
+
+        // --- 36/37. 舍吾皮肉/断汝筋骨: incoming damage modifier ---
+        float modifiedDamage = applyFleshBoneIncoming(defender, event.getAmount());
+        if (modifiedDamage != event.getAmount()) {
+            event.setAmount(modifiedDamage);
+        }
+    }
+
+    private static float applyFleshBoneIncoming(LivingEntity defender, float amount) {
+        ItemStack mainHand = defender.getMainHandItem();
+        if (mainHand.isEmpty()) return amount;
+        if (getMainHandEnchantmentLevel(defender, ModEnchantments.FLESH_SACRIFICE) > 0) {
+            return amount * 1.30f; // +30% incoming damage
+        }
+        if (getMainHandEnchantmentLevel(defender, ModEnchantments.BONE_BREAK) > 0) {
+            return amount * 0.70f; // -30% incoming damage
+        }
+        return amount;
     }
 
     private static boolean tryFinale(LivingEntity attacker, LivingEntity defender, DamageSource source,
@@ -374,6 +394,35 @@ public class ModEventHandlers {
             LOGGER.debug("[DamageEvent] Final amount={} (original={})", amount, event.getOriginalDamage());
         }
         event.setNewDamage(amount);
+
+        // --- 36. 舍吾皮肉 → 37. 断汝筋骨: switch enchantment after being hit ---
+        tryFleshToBoneBreak(defender);
+    }
+
+    private static void tryFleshToBoneBreak(LivingEntity defender) {
+        ItemStack weapon = defender.getMainHandItem();
+        if (weapon.isEmpty()) return;
+        if (weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.FLESH_SACRIFICE)) <= 0) return;
+
+        // Switch flesh_sacrifice → bone_break on the weapon
+        Holder<Enchantment> fleshHolder = ModEnchantments.getHolder(ModEnchantments.FLESH_SACRIFICE);
+        Holder<Enchantment> boneHolder = ModEnchantments.getHolder(ModEnchantments.BONE_BREAK);
+        if (fleshHolder == null || boneHolder == null) return;
+
+        ItemEnchantments current = weapon.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);
+        ItemEnchantments.Mutable mutable = new ItemEnchantments.Mutable(current);
+        mutable.set(fleshHolder, 0); // remove old
+        mutable.set(boneHolder, 1);  // add new
+        weapon.set(DataComponents.ENCHANTMENTS, mutable.toImmutable());
+
+        // Record the switch tick for the 3-second timer
+        if (defender instanceof Player player) {
+            player.getPersistentData().putLong(KEY_BONE_BREAK_SWITCH_TICK, player.tickCount);
+        }
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[FleshSacrifice] Switched to Bone Break on {}'s weapon at tick {}",
+                    defender.getName().getString(), defender.tickCount);
+        }
     }
 
     private static float applyAttackerEnchantments(LivingEntity attacker, LivingEntity defender,
@@ -400,6 +449,7 @@ public class ModEventHandlers {
         applyFlippingCoin(attacker, defender);
         applyGrievousWound(attacker, defender);
         amount = applyBloodPathBonus(attacker, defender, amount);
+        amount = applyBoneBreakAttack(attacker, amount);
         return amount;
     }
 
@@ -690,6 +740,15 @@ public class ModEventHandlers {
         CustomData.update(DataComponents.CUSTOM_DATA, weapon, root -> {
             root.put(BLOOD_PATH_TAG, killCounts.copy());
         });
+    }
+
+    // --- 37. 断汝筋骨 Bone Break: +500% outgoing damage (6x multiplier) ---
+    private static float applyBoneBreakAttack(LivingEntity attacker, float amount) {
+        if (getMainHandEnchantmentLevel(attacker, ModEnchantments.BONE_BREAK) <= 0) return amount;
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[BoneBreak] Attack damage x6 (was {})", amount);
+        }
+        return amount * 6.0f; // +500% = 6x
     }
 
     private static float applyDefenderEnchantments(LivingEntity defender, DamageSource source, float amount) {
@@ -987,6 +1046,7 @@ public class ModEventHandlers {
         tickMustOpenPath(player, tickCount);
         tickIncompleteForeknowledge(player, tickCount);
         tickEmergencyRescue(player, data);
+        tickBoneBreakRevert(player, data);
         tickCooldownsAndCleanup(player, data, tickCount);
     }
 
@@ -1258,6 +1318,35 @@ public class ModEventHandlers {
             nearby.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 60, 2));
         }
         data.putInt(KEY_EMERGENCY_RESCUE_CD, 200);
+    }
+
+    // --- 37→36. 断汝筋骨 → 舍吾皮肉: revert after 3 seconds (60 ticks) ---
+    private static void tickBoneBreakRevert(Player player, CompoundTag data) {
+        ItemStack weapon = player.getMainHandItem();
+        if (weapon.isEmpty()) return;
+        if (weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BONE_BREAK)) <= 0) return;
+
+        long switchTick = data.getLong(KEY_BONE_BREAK_SWITCH_TICK);
+        if (switchTick == 0) return; // no switch recorded yet
+        // 3 seconds = 60 ticks
+        if (player.tickCount - switchTick < 60) return;
+
+        // Switch bone_break → flesh_sacrifice
+        Holder<Enchantment> fleshHolder = ModEnchantments.getHolder(ModEnchantments.FLESH_SACRIFICE);
+        Holder<Enchantment> boneHolder = ModEnchantments.getHolder(ModEnchantments.BONE_BREAK);
+        if (fleshHolder == null || boneHolder == null) return;
+
+        ItemEnchantments current = weapon.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);
+        ItemEnchantments.Mutable mutable = new ItemEnchantments.Mutable(current);
+        mutable.set(boneHolder, 0); // remove old
+        mutable.set(fleshHolder, 1); // add new
+        weapon.set(DataComponents.ENCHANTMENTS, mutable.toImmutable());
+        data.remove(KEY_BONE_BREAK_SWITCH_TICK);
+
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[BoneBreak] Reverted to Flesh Sacrifice on {}'s weapon at tick {}",
+                    player.getName().getString(), player.tickCount);
+        }
     }
 
     private static void tickCooldownsAndCleanup(Player player, CompoundTag data, int tickCount) {

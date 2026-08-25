@@ -154,4 +154,10 @@ public class ModEnchantments {
 
     // 35. 智能图腾 - Smart Totem: Totem of Undying works from inventory when chest enchanted.
     public static final ResourceKey<Enchantment> SMART_TOTEM = key("smart_totem");
+
+    // 36. 舍吾皮肉（肉斩）- Flesh Sacrifice: +30% incoming damage, transforms to Bone Break on hit.
+    public static final ResourceKey<Enchantment> FLESH_SACRIFICE = key("flesh_sacrifice");
+
+    // 37. 断汝筋骨（骨断）- Bone Break: +500% outgoing damage, -30% incoming damage, reverts after 3s.
+    public static final ResourceKey<Enchantment> BONE_BREAK = key("bone_break");
 }

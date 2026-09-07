@@ -60,12 +60,18 @@
 - ✅ 备份 `_backup_pre_unimined/`(无 git, 切构建前快照)
 - 验证: offline compile ✅; runServer testall 63/63 ✅(mixin 平移/清理后)
 
-## 4 平台矩阵(round16 起, 网络阻塞中暂停)
-- 目标: NeoForge 1.21.1(现状)+ Forge 1.21.1 + NeoForge 1.20.1 + Forge 1.20.1
-- 工具: UniMined(LTS lts/1.4, 插件 `xyz.wagyourtail.unimined`); 同版本多 loader = 多 sourceSet,
-  跨版本 = 每版本独立 MC 环境; 规划细节见 `UNIMINED_MIGRATION.md` 6.5
-- ⚠️ 阻塞: 外网/代理出口全断(UniMined 插件 + 各平台 MC 工具链需在线下载); 用户修复代理中
-- 恢复后第一步: 原地把 build.gradle/settings.gradle 切 UniMined, 先验证 NeoForge 1.21.1 编译+63/63
+## 多平台矩阵完成(round 7-9, 最终交付)
+- ✅ 目标修订: 4 平台 → **3 平台**(Apothic 前置仅 1.20.1-forge/1.3.7 与 1.21.1-neo/2.10.1; 1.21.1-forge 无前置 → 移除)
+- ✅ **NeoForge 1.21.1**(主工程): 89 附魔完整, testall **63/63**(跨版本重构全程零回归)
+- ✅ **Forge 1.20.1**(platforms/1.20.1-forge): 89 附魔代码注册 + 效果 3 批(Tick 19/SideEffects 20/
+  NewEnchants 73-89)+ 16 mixin(删除 MaceItemMixin, 1.20.1 无此类)+ EnchantWiring1201 接线;
+  compile ✅ + 壳启动 Done(25.9s)+ jar 122KB
+- ✅ **NeoForge 1.20.1**(platforms/1.20.1-neoforge): 与 forge 全量同步(27 文件), compile ✅ + jar 156KB
+- 平台差异: attributeslib(1.20.1 包 dev.shadowsoffire.attributeslib.api, RegistryObject.get)/
+  UUID modifier / EnchantmentHelper.getItemEnchantmentLevel / new ResourceLocation /
+  ForgeMod.STEP_HEIGHT_ADDITION 等; 详见 UNIMINED_MIGRATION.md 6.7
+- 验证边界: 1.20.1 dev 无 attributeslib remap → mixin 运行时注入验证需真实客户端(生产 mods 双装)
+- GitHub: 已推送 Zhonz/Zhonz-s-More-Enchantments(干净单提交历史 7b3227e, 8MB; 清除误入 846MB hprof)
 
 ## 版本差异要点(迁移到 1.20.1 Forge 时注意)
 - 1.20.1 Forge:无 LivingIncomingDamageEvent/DamageContainer(1.21 NeoForge 伤害管线大改),附魔为代码注册非 1.21 数据驱动;1.21.1 依赖 Mojang mapped 方法签名,mixin 目标随版本不同

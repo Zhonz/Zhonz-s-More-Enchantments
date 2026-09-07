@@ -48,6 +48,14 @@
 - 目灯按用户口径:三个属性(CRIT_DAMAGE/bonus/mult)同时 ×0.5
 
 ## 迁移进度(updated round12)
+- ✅ **收到伤害通道 incoming_damage(用户新增, round-incoming)**: 受击侧易伤/减伤统一迁移
+  - 语义: 最终受到伤害 = 经保护附魔与护甲结算后的伤害 × incoming_damage(默认 1; 易伤>1 减伤<1)
+  - 属性注册+全 LivingEntity 挂载; common 引擎 settleIncoming/setIncomingDamage(纯函数)
+  - 护甲后统一结算(onLivingDamage 受击段); 护甲前仅保留免疫/保命/标记副作用
+  - tick 常驻聚合: apex×0.4/cornered低血×0.5/luxurious满血×1.5/flesh_bone×1.3或0.7/rapid y<0
+  - 事件条件: 海疆易伤/先知×2.7/冬痕冰霜×1.5/燃烧黄昏火焰/惨白标记×1.3/不停狩叠层
+  - 实测: cornered低血受击 40.0×0.5=20.0(IncomingDamage debug); 主工程 testall 63/63
+  - 1.20.1 forge/neoforge 同步(注册+挂载+护甲后 settle+事件条件易伤); 三平台 compile ✅
 - ✅ sorrowful_red → bonus(背包格, 验证 13.20)
 - ✅ supreme_art → bonus(+20%/级, 仅主手, 验证 9.60)
 - ✅ new_sun → bonus(+150%×光/15), 点燃副作用保留链中

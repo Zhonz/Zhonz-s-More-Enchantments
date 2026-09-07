@@ -1,0 +1,8 @@
+{
+  "description": { "translate": "enchantment.zhonz_more_enchantments.titan" },
+  "supported_items": "#zhonz_more_enchantments:enchantable/melee_weapon",
+  "weight": 5, "max_level": 1,
+  "min_cost": { "base": 10, "per_level_above_first": 5 },
+  "max_cost": { "base": 25, "per_level_above_first": 10 },
+  "anvil_cost": 1, "slots": ["mainhand"]
+}

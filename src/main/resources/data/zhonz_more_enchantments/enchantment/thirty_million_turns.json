@@ -1,0 +1,8 @@
+{
+  "description": { "translate": "enchantment.zhonz_more_enchantments.thirty_million_turns" },
+  "supported_items": "#zhonz_more_enchantments:enchantable/nether_star",
+  "weight": 2, "max_level": 1,
+  "min_cost": { "base": 30, "per_level_above_first": 10 },
+  "max_cost": { "base": 50, "per_level_above_first": 10 },
+  "anvil_cost": 4, "slots": ["mainhand", "offhand"]
+}

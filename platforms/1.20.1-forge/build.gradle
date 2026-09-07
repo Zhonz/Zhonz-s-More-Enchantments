@@ -1,0 +1,57 @@
+plugins {
+    id 'java'
+    id 'xyz.wagyourtail.unimined' version '1.4.1'
+}
+
+group = 'com.zhonz.moreenchantments'
+version = '1.0.0'
+
+base { archivesName = "zhonz-more-enchantments-1.20.1-forge" }
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(17) } // MC 1.20.1 = Java 17
+}
+
+// ===== common 平台无关核心(与 1.21.1 主工程共享同一份源码, 见仓库根 src/main/java/.../common)=====
+// 通过源码目录方式共享: 直接引入根工程的 common 包(UniMined 仅单工程, 故用 srcDir 指向共享目录)
+sourceSets {
+    main {
+        java {
+            srcDir '../../src/main/java/com/zhonz/moreenchantments/common'
+            exclude 'enchant/EnchantmentKeys.java'
+            // 排除 EnchantmentKeys: 1.21 数据驱动 ResourceKey 常量(依赖 1.21 RL API),
+            // 1.20.1 附魔代码注册用各自键源
+        }
+        // resources: 使用默认 src/main/resources(勿重复 srcDir, 否则 mods.toml duplicate)
+    }
+}
+
+repositories {
+    mavenCentral()
+    unimined.minecraftForgeMaven()
+    unimined.wagYourMaven("releases")
+    maven { url = "https://maven.shadowsoffire.dev/releases" }
+}
+
+unimined.minecraft(sourceSets.main) {
+    version project.minecraft_version
+    mappings { mojmap() }
+    minecraftForge {
+        loader project.forge_version
+        mixinConfig 'zhonz_more_enchantments.mixins.json'
+    }
+    defaultRemapJar = true
+}
+
+dependencies {
+    // Apothic dev 注入待联调(见文档); 壳阶段无外部 mod 依赖
+    // 效果移植批 1(TickEffectsBatch1)起引用 attributeslib(1.20.1 Apothic)的 ALObjects 属性常量。
+    // compileOnly: 仅编译期引用字段; 不进 run classpath —— 正式联调仍按 UNIMINED_MIGRATION
+    // "打 jar 放真实 mods 目录"(attributeslib 由生产环境 mods 提供)。
+    compileOnly("dev.shadowsoffire:ApothicAttributes:${apothic_attributes_version}")
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}

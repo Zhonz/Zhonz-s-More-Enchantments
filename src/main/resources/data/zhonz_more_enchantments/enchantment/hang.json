@@ -1,0 +1,18 @@
+{
+  "description": {
+    "translate": "enchantment.zhonz_more_enchantments.hang"
+  },
+  "supported_items": "#minecraft:enchantable/durability",
+  "weight": 1,
+  "max_level": 1,
+  "min_cost": {
+    "base": 1,
+    "per_level_above_first": 0
+  },
+  "max_cost": {
+    "base": 10,
+    "per_level_above_first": 0
+  },
+  "anvil_cost": 4,
+  "slots": ["mainhand", "offhand", "head", "chest", "legs", "feet"]
+}

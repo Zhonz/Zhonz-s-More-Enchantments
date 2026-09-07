@@ -1,0 +1,19 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="All Rights Reserved"
+
+[[mods]]
+modId="zhonz_more_enchantments"
+version="1.0.0"
+displayName="Zhonz's More Enchantments (1.20.1 NeoForge)"
+authors="Zhonz"
+description='''
+Zhonz's More Enchantments — 1.20.1 NeoForge 平台构建。
+统一增伤属性通道(bonus_damage / damage_multiplier / flat_damage)。
+'''
+[[dependencies.zhonz_more_enchantments]]
+    modId="neoforge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"

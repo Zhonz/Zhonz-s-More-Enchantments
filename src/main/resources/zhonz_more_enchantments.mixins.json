@@ -1,0 +1,29 @@
+{
+    "required": true,
+    "minVersion": "0.8",
+    "package": "com.zhonz.moreenchantments.neoforge.mixin",
+    "compatibilityLevel": "JAVA_21",
+    "refmap": "zhonz_more_enchantments.refmap.json",
+    "mixins": [
+        "MaceItemMixin",
+        "ItemStackDurabilityMixin",
+        "BlockBreakMixin",
+        "CrossbowChargeMixin",
+        "ProjectileWeaponCooldownMixin",
+        "PlayerShieldBlockMixin",
+        "PlayerFoodEffectMixin",
+        "DivineCurseBlockBreakMixin",
+        "ThePureEffectMixin",
+        "TotemUseMixin",
+        "ManifestTotemMixin",
+        "HaloSleepMixin",
+        "WeepingFireMixin",
+        "PlayerWeepingFireMixin",
+        "FireImmunePierceMixin",
+        "FireResistancePierceMixin",
+        "BeaconMercyMixin"
+    ],
+    "injectors": {
+        "defaultRequire": 1
+    }
+}

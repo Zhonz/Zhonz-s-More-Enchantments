@@ -1,0 +1,72 @@
+# Zhonz's More Enchantments — 会话状态(压缩上下文)
+
+> 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
+
+## 项目
+- NeoForge 1.21.1 附魔 Mod,工作区 `D:\WXH\workspace\mcmodmaker\ZhonzsMoreEnchantments`(Windows, gradlew.bat, `GRADLE_USER_HOME` 用工作区内 `.gradle_home`)
+- 前置:Apothic Attributes 1.21.1-2.10.1 + Placebo(必需,`build.gradle` 已排除 Curios)
+- 设计原则:增伤只参与最后伤害判定;兼容性优先。当前规划:**升级为 UniMined/MultiLoader,同时支持 Forge 1.20.1 + NeoForge 1.21.1**
+
+## 已实现
+- 附魔 72 + 新设计 73-89 全部 17 个已注册实现(共 89),`ENCHANTMENTS.md` 为权威设计/实现说明(五章已标 ✅)
+- 统一伤害框架:自定义伤害类型 weeping_fire/frost/true_damage;`util/WeepingFireHelper`(hurt HEAD 转伤害类型);mixin 集合(目录 `src/main/java/com/zhonz/moreenchantments/mixin/`)
+- **统一增伤属性通道(新建)**:`attribute/ZhonzAttributes.java`
+  - `bonus_damage`(加伤,结算 ×(1+加伤))
+  - `damage_multiplier`(乘伤,结算 ×乘伤)
+  - 结算 `final = damage × (1+bonus) × mult`,已接入 onLivingDamage 最后一步
+  - 已挂到全部 LivingEntity(EntityAttributeModificationEvent);lang 键已加中英
+- **锐意(keen_will)按用户修正**:武器基础攻击 ATTACK_DAMAGE 每层 +1(10s 可叠),非最终伤害加值 ✓
+- **目灯(eye_lamp)严格版**:受击给攻击者 3s"眩惑"——CRIT_DAMAGE ×0.5、bonus_damage ×0.5、damage_multiplier ×0.5(三属性同减半)
+- **已迁入属性通道的示范**:sorrowful_red(背包格数+10%/格→bonus)、supreme_art(+20%/级→bonus);recordMourningDamage 移到统一结算后
+- 测试:`/zhonztest testall` 63/63 通过(runServer + RCON `tools/rcon.js`,`node tools/rcon.js "zhonztest testall"`)
+
+## 用户最终口径(2026-09 洗澡后一次性回答)
+- Q1 <1 乘数 → **乘伤**,允许 <1(不 clamp)
+- Q2 "自身燃烧×3"等 ×N 文案 → **乘伤**
+- Q3 条件倍率(rapid_ascent/fleet 等)→ **统一乘伤聚合**
+- Q4 非 Player 生物 → **也读这两个属性**
+- Q5 组合语义 → **接受重组**;两属性公式:`最终伤害 = 基础 × (1 + 增伤百分比) × 乘伤百分比`
+- Q6 乘伤刷新时机 → **tick 缓存**(每 tick 把聚合乘积写入 damage_multiplier)
+- Q7 副作用基准 → **加成后**(溅射/减免/记录均以最终统一结算后为基准)
+- 流程指示:**先完成全部内容迁移(不逐项测试)→ 改框架(阶段二/三)→ 最后统一 testall 63/63 回归**
+- 迁移中只保 compileJava 通过;runServer/testall 推迟到内容迁移完成之后
+- debuff 允许自定义 MobEffect;附魔名称必须与 ENCHANTMENTS.md 逐字一致(含引号/符号),句子式名称完整翻译
+
+## 待确认问题(Q8/Q9/Q12/Q13 — 用户已拍板)
+- ✅ **Q8 = 是(已落地, round10)**:非玩家生物(mob)手持附魔武器也享受属性通道加成。实施:`refreshDamageMultiplierAggregate`(原 tickDamageMultiplierAggregator)、`addPercentBonus`、`setDamageMultiplier` 全部改收 `LivingEntity`;onLivingDamage 结算前兜底刷新取消 `instanceof Player` 分支,对所有 LivingEntity attacker 生效。compile ✅ + runServer testall **63/63** ✅。
+  - 边界:加伤型 tick(supreme_art 等)仍在 PlayerTick 路径(依赖玩家 data),mob 侧乘伤通道(骨碎 ×6)已全生物覆盖;如需 mob 侧加伤 → 后续加 LivingTick,不在本回合。
+- ✅ **Q9 = 可以(已落地 round11-13)**:事件条件型增伤 = "事件内判定 → 临时 modifier(乘伤 delta=当前mult×(factor-1) 严格乘积 / 加伤 ADD_VALUE 累加)→ 统一结算 → 清除"。
+  试点 titan(乘伤)、批量 17+ 项见 `MIGRATION_PLAN.md` 进度段。
+- ✅ **Q12/Q13(round13 现场确认)**:flat 绝对加伤(fleet_footsteps/floating_grace)→ **另设 flat_damage 属性通道**;
+  rhythm ×1.5 → **拆副作用后进乘伤事件通道**。compile ✅ + testall 63/63 ✅。
+
+## 进行中(阶段一:全量增伤迁移)
+- ✅ 攻击侧手写乘法已全部迁入统一属性通道(bonus_damage 加伤% / damage_multiplier 乘伤× / flat_damage 绝对量):
+  tick 通道(无条件自身态)+ 事件临时 modifier(目标/时序条件型)+ flat 通道。已迁移 20+ 项,每轮 testall 63/63。
+  详细台账见 `MIGRATION_PLAN.md` 进度段(updated round13)。
+- 分类规则:无条件/自身状态可 tick 的加伤 → tick 写 bonus(每附魔独立 modifier id);乘伤 → tick 写 damage_multiplier(总乘积单值);目标/事件条件型 → 事件内判定但仍只经统一结算出口;副作用(溅射/减免/记录)移到统一结算后,基准=加成后
+- 客户端才可见项未实测(推迟到统一测试):庄严哀悼粒子、三千万转右键龙蛋、慈悲右键信标绑定+均分(BeaconMercyMixin)、铸就全一城盾盾挡、天之锁、唯有命运免死
+
+## 测试栈
+- runServer(专属服务器,`run/` world"新的世界",offline;RCON 25575,密码 zhonz_test_rcon)
+- 日志 `run/logs/debug.log`(DEBUG 配置)/`latest.log`
+- MaaMCP 曾用于客户端控制,当前未连;窗口"Minecraft NeoForge* 1.21.1"
+
+## 阶段二收尾(round16, 已完成)
+- ✅ tick 加伤 percent 下沉 common/damage/TickBonusRules(5 项, 事件层 tick 委托)
+- ✅ mixin 18 个 → neoforge/mixin 包, mixins.json package 同步(运行时验证正常)
+- ✅ 死代码清理(死存根/未用 import);MODID 单源化(CommonConstants, 全项目引用替换)
+- ✅ common 包确认零平台 import(UniMined 复用硬前提)
+- ✅ 备份 `_backup_pre_unimined/`(无 git, 切构建前快照)
+- 验证: offline compile ✅; runServer testall 63/63 ✅(mixin 平移/清理后)
+
+## 4 平台矩阵(round16 起, 网络阻塞中暂停)
+- 目标: NeoForge 1.21.1(现状)+ Forge 1.21.1 + NeoForge 1.20.1 + Forge 1.20.1
+- 工具: UniMined(LTS lts/1.4, 插件 `xyz.wagyourtail.unimined`); 同版本多 loader = 多 sourceSet,
+  跨版本 = 每版本独立 MC 环境; 规划细节见 `UNIMINED_MIGRATION.md` 6.5
+- ⚠️ 阻塞: 外网/代理出口全断(UniMined 插件 + 各平台 MC 工具链需在线下载); 用户修复代理中
+- 恢复后第一步: 原地把 build.gradle/settings.gradle 切 UniMined, 先验证 NeoForge 1.21.1 编译+63/63
+
+## 版本差异要点(迁移到 1.20.1 Forge 时注意)
+- 1.20.1 Forge:无 LivingIncomingDamageEvent/DamageContainer(1.21 NeoForge 伤害管线大改),附魔为代码注册非 1.21 数据驱动;1.21.1 依赖 Mojang mapped 方法签名,mixin 目标随版本不同
+- Apothic Attributes 1.20.1 Forge 存在(独立版本),但 API/事件内部不同,需逐项核对

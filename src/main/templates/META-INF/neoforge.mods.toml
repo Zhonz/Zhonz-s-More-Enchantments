@@ -1,0 +1,44 @@
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+description='''
+Zhonz's More Enchantments - Adds many powerful custom enchantments to Minecraft.
+No "Too Expensive" when installing this mod.
+Damage bonuses only participate in final damage calculation for compatibility with other mods' weapons and equipment.
+'''
+
+[[mixins]]
+config="${mod_id}.mixins.json"
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version},)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="enchdesc"
+    type="optional"
+    versionRange="[1,)"
+    ordering="NONE"
+    side="CLIENT"
+
+[[dependencies.${mod_id}]]
+    modId="apothic_attributes"
+    type="required"
+    versionRange="[2.10.1,)"
+    ordering="NONE"
+    side="BOTH"

@@ -1,0 +1,8 @@
+{
+  "description": { "translate": "enchantment.zhonz_more_enchantments.manifest" },
+  "supported_items": "#zhonz_more_enchantments:enchantable/totem",
+  "weight": 1, "max_level": 1,
+  "min_cost": { "base": 1, "per_level_above_first": 0 },
+  "max_cost": { "base": 10, "per_level_above_first": 0 },
+  "anvil_cost": 4, "slots": ["mainhand", "offhand"]
+}

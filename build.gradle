@@ -1,0 +1,159 @@
+buildscript {
+    repositories {
+        maven { url 'https://maven.neoforged.net/releases' }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'net.neoforged.moddev:net.neoforged.moddev.gradle.plugin:2.0.141'
+    }
+}
+
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'idea'
+}
+
+apply plugin: 'net.neoforged.moddev'
+
+tasks.named('wrapper', Wrapper).configure {
+    distributionType = Wrapper.DistributionType.BIN
+}
+
+version = mod_version
+group = mod_group_id
+
+sourceSets.main.resources {
+    srcDir('src/generated/resources')
+    exclude("**/*.bbmodel")
+    exclude("src/generated/**/.cache")
+}
+
+repositories {
+    maven { url 'https://maven.neoforged.net/releases' }
+    mavenCentral()
+    maven { url 'https://maven.shadowsoffire.dev/releases' }
+}
+
+base {
+    archivesName = mod_id
+}
+
+java {
+    toolchain {
+        // MC 1.21.1 runs on Java 21; options.release = 21 keeps bytecode at 21.
+        // Set to 25 if you prefer, Gradle will auto-download that JDK (see gradle.properties).
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+neoForge {
+    enable {
+        version = project.neo_version
+        disableRecompilation = true
+    }
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+    runs {
+        client {
+            client()
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+        server {
+            server()
+            programArgument '--nogui'
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+        gameTestServer {
+            type = "gameTestServer"
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+        data {
+            data()
+            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        }
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.DEBUG
+        }
+    }
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+dependencies {
+    // Apothic Attributes 属性库(必需)及其依赖 Placebo
+    // Curios 是 Apothic 的可选兼容依赖,本模组不使用,排除以避免引入额外模组
+    implementation("dev.shadowsoffire:ApothicAttributes:${apothic_attributes_version}") {
+        exclude group: 'top.theillusivec4.curios', module: 'curios-neoforge'
+    }
+    implementation "dev.shadowsoffire:Placebo:${placebo_version}"
+}
+
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+publishing {
+    publications {
+        register('mavenJava', MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            url "file://${project.projectDir}/repo"
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+def javaExe = System.getProperty('os.name').toLowerCase().contains('win') ? 'java.exe' : 'java'
+def javaPath = file(System.getProperty('java.home')).toPath().resolve('bin').resolve(javaExe).toFile().absolutePath
+
+afterEvaluate {
+    tasks.matching { it.name == 'createMinecraftArtifacts' }.configureEach {
+        javaExecutable.set(javaPath)
+        toolsJavaExecutable.set(javaPath)
+    }
+    tasks.matching { it.name == 'downloadAssets' }.configureEach {
+        javaExecutable.set(javaPath)
+    }
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}

@@ -1,0 +1,35 @@
+# Gradle
+.gradle/
+.gradle-home/
+.gradle_home/
+build/
+
+# æœ¬åœ°å¤‡ä»½(åˆ‡ UniMined å‰çš„å¿«ç…§, ä¸ä¸Šä¼ )
+_backup_pre_unimined/
+_unimined_probe/
+*.hprof
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# NeoForge dev runtime
+run/
+logs/
+
+# Generated resources (data run output)
+src/generated/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# UniMined Æ½Ì¨×Ó¹¤³Ì¹¹½¨²úÎï
+platforms/*/build/
+platforms/*/.gradle/
+_enchant_map.txt

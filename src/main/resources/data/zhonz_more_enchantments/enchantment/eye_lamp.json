@@ -1,0 +1,8 @@
+{
+  "description": { "translate": "enchantment.zhonz_more_enchantments.eye_lamp" },
+  "supported_items": "#zhonz_more_enchantments:enchantable/armor_and_shield",
+  "weight": 2, "max_level": 1,
+  "min_cost": { "base": 30, "per_level_above_first": 10 },
+  "max_cost": { "base": 50, "per_level_above_first": 10 },
+  "anvil_cost": 4, "slots": ["head", "chest", "legs", "feet", "mainhand", "offhand"]
+}

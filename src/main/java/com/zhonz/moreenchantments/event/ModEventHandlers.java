@@ -354,15 +354,8 @@ public class ModEventHandlers {
         applyEyeLampMark(defender, event);
     }
 
-    private static float applyFleshBoneIncoming(LivingEntity defender, float amount) {
-        ItemStack mainHand = defender.getMainHandItem();
-        if (mainHand.isEmpty()) return amount;
-        if (getMainHandEnchantmentLevel(defender, ModEnchantments.FLESH_SACRIFICE) > 0) {
-            return amount * 1.30f; // +30% incoming damage
-        }
-        if (getMainHandEnchantmentLevel(defender, ModEnchantments.BONE_BREAK) > 0) {
-            return amount * 0.70f; // -30% incoming damage
-        }
+        private static float applyFleshBoneIncoming(LivingEntity defender, float amount) {
+        // 已迁 refreshIncomingAggregate(主手 ×1.3/×0.7); 保留文档对照
         return amount;
     }
 
@@ -1232,12 +1225,8 @@ public class ModEventHandlers {
         }
     }
 
-    private static void applyBurningDuskVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
-        float pct = getEntityData(defender).getFloat(KEY_BURNING_DUSK_PCT);
-        if (pct <= 0) return;
-        if (!event.getSource().is(net.minecraft.tags.DamageTypeTags.IS_FIRE)
-                && !event.getSource().is(WEEPING_FIRE)) return; // 哭泣之火同样按火焰易伤结算
-        event.setAmount(event.getAmount() * (1.0f + pct));
+        private static void applyBurningDuskVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 burningDuskFactor(incoming_damage 通道); 保留文档对照
     }
 
     // --- 44. 比任何人都要悲伤的哭泣之子: 火焰免疫 / 点燃双方 / 自身燃烧增伤 ---
@@ -1286,9 +1275,8 @@ public class ModEventHandlers {
                 level > 0 ? 5.0 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
     }
 
-    private static void applyApexIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        if (!isHoldingApex(defender)) return;
-        event.setAmount(event.getAmount() * 0.4f); // -60%
+        private static void applyApexIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 refreshIncomingAggregate(×0.4); 保留文档对照
     }
 
     // --- 46. 困兽之斗: 头盔, 生命<25% 受伤-50% 伤害+60% 治疗+50% ---
@@ -1306,10 +1294,8 @@ public class ModEventHandlers {
                 level > 0 ? 0.50 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
     }
 
-    private static void applyCorneredBeastIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        if (getSlotEnchantmentLevel(defender, ModEnchantments.CORNERED_BEAST, EquipmentSlot.HEAD) <= 0) return;
-        if (defender.getHealth() > defender.getMaxHealth() * 0.25f) return;
-        event.setAmount(event.getAmount() * 0.5f); // -50%
+        private static void applyCorneredBeastIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 refreshIncomingAggregate(×0.5); 保留文档对照
     }
 
     private static float applyCorneredBeastDamage(LivingEntity attacker, float amount) {
@@ -1379,11 +1365,8 @@ public class ModEventHandlers {
         }
     }
 
-    private static void applyCeaselessHuntIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        if (getMainHandEnchantmentLevel(defender, ModEnchantments.CEASELESS_HUNT) <= 0) return;
-        int stacks = updateCeaselessHunt(getEntityData(defender), defender.level().getGameTime());
-        if (stacks <= 0) return;
-        event.setAmount(event.getAmount() * (1.0f - 0.10f * stacks));
+        private static void applyCeaselessHuntIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 ceaselessHuntFactor(incoming_damage 通道); 保留文档对照
     }
 
     // --- 50. "新太阳": 护腿, 光照越高伤害越高(15级+150%), 攻击点燃目标 ---
@@ -1436,12 +1419,8 @@ public class ModEventHandlers {
                 com.zhonz.moreenchantments.common.damage.TickBonusRules.rapidAscent(EVENT_COND_CTX.levels, player));
     }
 
-    private static void applyRapidAscentIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        if (getSlotEnchantmentLevel(defender, ModEnchantments.RAPID_ASCENT, EquipmentSlot.FEET) <= 0) return;
-        double y = defender.getY();
-        if (y >= 0) return;
-        float mult = 1.0f + (float) (y * 0.01); // y=-20 → -20% 受伤
-        event.setAmount(event.getAmount() * mult);
+        private static void applyRapidAscentIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 refreshIncomingAggregate(y<0 减伤); 保留文档对照
     }
 
     // --- 53. 加速的未来: 头盔, 增伤=闪避率×2, 攻速=闪避率 ---
@@ -1496,14 +1475,8 @@ public class ModEventHandlers {
         getEntityData(defender).putLong(KEY_PALE_VULN_UNTIL, defender.level().getGameTime() + 600);
     }
 
-    private static void applyPaleMidnightVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
-        CompoundTag d = getEntityData(defender);
-        if (!d.contains(KEY_PALE_VULN_UNTIL)) return;
-        if (defender.level().getGameTime() >= d.getLong(KEY_PALE_VULN_UNTIL)) {
-            d.remove(KEY_PALE_VULN_UNTIL);
-            return;
-        }
-        event.setAmount(event.getAmount() * 1.3f);
+        private static void applyPaleMidnightVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 paleVulnerabilityFactor(incoming_damage 通道); 保留文档对照
     }
 
     // --- 57. "悲伤的红": 胸甲, 背包每有一格有物品增伤10% ---
@@ -1569,11 +1542,8 @@ public class ModEventHandlers {
                 0.2, AttributeModifier.Operation.ADD_VALUE);
     }
 
-    private static void applyLuxuriousHopeIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        if (getEnchantmentLevel(defender, ModEnchantments.LUXURIOUS_HOPE) <= 0) return;
-        if (defender.getHealth() >= defender.getMaxHealth()) {
-            event.setAmount(event.getAmount() * 1.5f);
-        }
+        private static void applyLuxuriousHopeIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 refreshIncomingAggregate(×1.5); 保留文档对照
     }
 
     // --- 61. 嗜光: 头盔, 光照>0 持续回饱食度 ---
@@ -2847,18 +2817,8 @@ public class ModEventHandlers {
         }
     }
 
-    private static float applyWinterMarkVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
-        CompoundTag defData = getEntityData(defender);
-        long until = defData.getLong(KEY_WINTER_MARK_UNTIL);
-        if (until <= 0 || defender.level().getGameTime() >= until) return event.getAmount();
-        boolean frostish = isFrostSource(event.getSource());
-        // 雪的伤攻击也算冰霜伤害(设计: 攻击视为冰霜)
-        if (!frostish && event.getSource().getEntity() instanceof LivingEntity atk
-                && getMainHandEnchantmentLevel(atk, ModEnchantments.SNOW_WOUND) > 0) {
-            frostish = true;
-        }
-        if (!frostish) return event.getAmount();
-        event.setAmount(event.getAmount() * 1.5f); // 冬痕: 冰霜伤害 +50%
+        private static float applyWinterMarkVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
+        // 已迁 winterMarkFactor(incoming_damage 通道); 保留文档对照
         return event.getAmount();
     }
 

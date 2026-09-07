@@ -349,29 +349,9 @@ public class ModEventHandlers {
         applyWeepingChildImmunity(defender, event);
         // --- 26. 假面的愚者: 佩戴者受击时获得随机增益/减益 ---
         applyFoolsMaskOnHit(defender);
-        // --- 73-89 防御侧 ---
-        applyWinterMarkVulnerability(defender, event);
+        // --- 73-89 防御侧(免疫/保命/标记副作用; 易伤/减伤乘法已迁 incoming_damage 通道) ---
         applyUnyieldingFateInvuln(defender, event);
         applyEyeLampMark(defender, event);
-        // --- 43. 燃烧的黄昏: 目标火焰易伤(仅当未被免疫取消时) ---
-        if (!event.isCanceled()) {
-            applyBurningDuskVulnerability(defender, event);
-            // --- 45-52. 防御侧: 顶点/困兽之斗/不停狩/极速攀升 ---
-            applyApexIncoming(defender, event);
-            applyCorneredBeastIncoming(defender, event);
-            applyCeaselessHuntIncoming(defender, event);
-            applyRapidAscentIncoming(defender, event);
-            // --- 60. 奢侈的希望: 满血受伤+50% ---
-            applyLuxuriousHopeIncoming(defender, event);
-            // --- 56. 惨白的午夜: 标记目标易伤+30% ---
-            applyPaleMidnightVulnerability(defender, event);
-        }
-
-        // --- 36/37. 舍吾皮肉/断汝筋骨: incoming damage modifier ---
-        float modifiedDamage = applyFleshBoneIncoming(defender, event.getAmount());
-        if (modifiedDamage != event.getAmount()) {
-            event.setAmount(modifiedDamage);
-        }
     }
 
     private static float applyFleshBoneIncoming(LivingEntity defender, float amount) {
@@ -535,6 +515,8 @@ public class ModEventHandlers {
                 recordMourningDamage(mourner, amount);
             }
         }
+        // 收到伤害通道: 结算前刷新 defender 的 tick 常驻减伤/易伤聚合(穿戴+状态判定)
+        refreshIncomingAggregate(defender);
         amount = applyDefenderEnchantments(defender, source, amount);
 
         // 收到伤害通道(round-incoming): 易伤(>1)与减伤(<1)统一聚合于 defender.incoming_damage,
@@ -562,15 +544,56 @@ public class ModEventHandlers {
         product *= mySeaDomainVulnerabilityFactor(defender);
         // Prophet's Call 标记: ×2.7
         product *= prophetsCallFactor(defender);
-        // 舍吾皮肉(受伤+30%)/断汝筋骨(受伤-30%): 主手状态(穿戴即对本次来源? 原在护甲前, 现移到护甲后)
-        // TODO(护甲前批): 困兽-50%/急速攀升/冬痕×1.5/pale×1.3/apex×0.4/luxurious×1.5/ceaseless/目灯×0.5
-        //                —— 那些在 onLivingHurt(护甲前), 语义需确认后迁移; 本函数先收 onLivingDamage 段既有项
+        // 74. 冬痕(雪的殇标记, 冰霜伤害 +50%)
+        product *= winterMarkFactor(defender, source);
+        // 43. 燃烧的黄昏: 目标火焰易伤(火焰来源 ×(1+pct))
+        product *= burningDuskFactor(defender, source);
+        // 56. 惨白的午夜: 标记目标易伤 ×1.3
+        product *= paleVulnerabilityFactor(defender);
+        // 49. 不停狩: 叠层受伤 -(10%×stacks)(主手, 叠层更新一次)
+        product *= ceaselessHuntFactor(defender);
         setIncomingDamage(defender, INCOMING_EVENT_MULT, product);
         amount = applyIncomingDamageAttributes(defender, amount);
         // 清除事件临时聚合(幂等)
         var inst = defender.getAttribute(com.zhonz.moreenchantments.attribute.ZhonzAttributes.INCOMING_DAMAGE);
         if (inst != null) inst.removeModifier(INCOMING_EVENT_MULT);
         return amount;
+    }
+
+    private static double winterMarkFactor(LivingEntity defender, DamageSource source) {
+        CompoundTag defData = getEntityData(defender);
+        long until = defData.getLong(KEY_WINTER_MARK_UNTIL);
+        if (until <= 0 || defender.level().getGameTime() >= until) return 1.0D;
+        boolean frostish = isFrostSource(source);
+        if (!frostish && source.getEntity() instanceof LivingEntity atk
+                && getMainHandEnchantmentLevel(atk, ModEnchantments.SNOW_WOUND) > 0) {
+            frostish = true;
+        }
+        return frostish ? 1.5D : 1.0D; // 冬痕: 冰霜伤害 +50%
+    }
+
+    private static double burningDuskFactor(LivingEntity defender, DamageSource source) {
+        float pct = getEntityData(defender).getFloat(KEY_BURNING_DUSK_PCT);
+        if (pct <= 0) return 1.0D;
+        if (!source.is(net.minecraft.tags.DamageTypeTags.IS_FIRE) && !source.is(WEEPING_FIRE)) return 1.0D;
+        return 1.0f + pct;
+    }
+
+    private static double paleVulnerabilityFactor(LivingEntity defender) {
+        CompoundTag d = getEntityData(defender);
+        if (!d.contains(KEY_PALE_VULN_UNTIL)) return 1.0D;
+        if (defender.level().getGameTime() >= d.getLong(KEY_PALE_VULN_UNTIL)) {
+            d.remove(KEY_PALE_VULN_UNTIL);
+            return 1.0D;
+        }
+        return 1.3D;
+    }
+
+    private static double ceaselessHuntFactor(LivingEntity defender) {
+        if (getMainHandEnchantmentLevel(defender, ModEnchantments.CEASELESS_HUNT) <= 0) return 1.0D;
+        int stacks = updateCeaselessHunt(getEntityData(defender), defender.level().getGameTime());
+        if (stacks <= 0) return 1.0D;
+        return 1.0f - 0.10f * stacks;
     }
 
     private static double mySeaDomainVulnerabilityFactor(LivingEntity defender) {
@@ -2749,6 +2772,41 @@ public class ModEventHandlers {
     }
 
     private static final ResourceLocation UNIFIED_MULT_AGGREGATE = rl("unified_mult_aggregate");
+    private static final ResourceLocation INCOMING_TICK_AGGREGATE = rl("incoming_tick_aggregate");
+
+    /**
+     * 收到伤害 tick 常驻聚合: 把"穿戴/自身状态可判定"的减伤/易伤总乘积写入
+     * defender.incoming_damage 的单一聚合 modifier(默认1, 写 product-1)。
+     * 每次受击结算前刷新(与攻击侧 refreshDamageMultiplierAggregate 同频, 免 PlayerTick)。
+     * 事件条件型(标记/来源)在 applyIncomingSettlement 以临时 modifier 追加(严格乘积)。
+     */
+    private static void refreshIncomingAggregate(LivingEntity defender) {
+        double product = 1.0D;
+        // 45. 顶点(主/副手): 受伤 -60% → ×0.4
+        if (isHoldingApex(defender)) product *= 0.4D;
+        // 46. 困兽之斗(头盔, 生命<25%): 受伤 -50% → ×0.5
+        if (getSlotEnchantmentLevel(defender, ModEnchantments.CORNERED_BEAST, EquipmentSlot.HEAD) > 0
+                && defender.getHealth() <= defender.getMaxHealth() * 0.25f) {
+            product *= 0.5D;
+        }
+        // 60. 奢侈的希望(满血): 受伤 +50% → ×1.5
+        if (getEnchantmentLevel(defender, ModEnchantments.LUXURIOUS_HOPE) > 0
+                && defender.getHealth() >= defender.getMaxHealth() - 0.5f) {
+            product *= 1.5D;
+        }
+        // 36/37. 舍吾皮肉(受伤+30%)/断汝筋骨(受伤-30%): 主手状态
+        ItemStack hand = defender.getMainHandItem();
+        if (!hand.isEmpty()) {
+            if (hand.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.FLESH_SACRIFICE)) > 0) product *= 1.3D;
+            else if (hand.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BONE_BREAK)) > 0) product *= 0.7D;
+        }
+        // 52. 极速攀升(靴子, y<0): 受伤 ×(1 + y/100)
+        if (getSlotEnchantmentLevel(defender, ModEnchantments.RAPID_ASCENT, EquipmentSlot.FEET) > 0) {
+            double y = defender.getY();
+            if (y < 0) product *= (1.0D + y * 0.01D);
+        }
+        setIncomingDamage(defender, INCOMING_TICK_AGGREGATE, product);
+    }
 
     // ===================================================================
     // 新设计附魔 73-89(2026-09, 见 ENCHANTMENTS.md 五章)

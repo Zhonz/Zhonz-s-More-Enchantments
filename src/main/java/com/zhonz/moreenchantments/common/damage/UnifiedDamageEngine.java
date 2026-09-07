@@ -88,6 +88,43 @@ public final class UnifiedDamageEngine {
     }
 
     /**
+     * 收到伤害结算(纯函数, 跨版本): final = amount × incoming。
+     *
+     * incoming 为受击者 incoming_damage 属性当前值(默认 1, 易伤&gt;1 减伤&lt;1),
+     * 由平台层读值传入; 在护甲结算后乘一次(用户 round-incoming 口径)。
+     *
+     * @param defenderName 仅用于 debug 日志
+     * @param amount   经护甲与保护结算后的伤害(攻击侧统一结算之后的值)
+     * @param incoming 受击者 incoming_damage 当前值
+     */
+    public static float settleIncoming(String defenderName, float amount, double incoming) {
+        if (incoming == 1.0D) return amount;
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[IncomingDamage] defender={} amount {} -> {}*{}={}",
+                    defenderName, amount, amount, incoming, amount * (float) incoming);
+        }
+        return amount * (float) incoming;
+    }
+
+    /**
+     * 收到伤害乘数写入: 把总乘积写入 incoming_damage 的单一聚合 modifier
+     * (属性默认 1.0, ADD_VALUE 写 (product-1))。受击侧乘数类附魔经此聚合,
+     * 结算时读属性值统一乘一次。重复调用覆盖该 id(先 remove 再 add)。
+     *
+     * @param inst    incoming_damage AttributeInstance(调用方取)
+     * @param id      唯一聚合 modifier id(建议 "incoming_&lt;附魔&gt;")
+     * @param product 乘积(1.0 = 无影响, 移除该 id)
+     */
+    public static void setIncomingDamage(net.minecraft.world.entity.ai.attributes.AttributeInstance inst, ResourceLocation id, double product) {
+        if (inst == null) return;
+        removeModifierById(inst, id);
+        double delta = product - 1.0D;
+        if (Math.abs(delta) > 0.0001D) {
+            addValueModifier(inst, id, delta);
+        }
+    }
+
+    /**
      * 加伤写入: 以独立 modifier id 累加百分比(ADD_VALUE)。同 id 重复调用 = 覆盖(先 remove 再 add)。
      *
      * @param inst    加伤层 AttributeInstance(调用方取: attacker.getAttribute(bonusAttr))

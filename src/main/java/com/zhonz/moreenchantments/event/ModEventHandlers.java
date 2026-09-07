@@ -537,11 +537,9 @@ public class ModEventHandlers {
         }
         amount = applyDefenderEnchantments(defender, source, amount);
 
-        // My Sea Domain vulnerability stacks onto the defender for 60s
-        amount = applyMySeaDomainVulnerability(defender, amount);
-
-        // Prophet's Call: +170% damage to currently-marked hostiles
-        amount = applyProphetsCallBonus(defender, amount);
+        // 收到伤害通道(round-incoming): 易伤(>1)与减伤(<1)统一聚合于 defender.incoming_damage,
+        // 护甲结算后乘一次(用户口径)。applyIncomingSettlement 计算本事件条件乘积 → 写聚合 → 乘 → 清除。
+        amount = applyIncomingSettlement(defender, source, amount);
 
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("[DamageEvent] Final amount={} (original={})", amount, event.getOriginalDamage());
@@ -550,6 +548,59 @@ public class ModEventHandlers {
 
         // --- 36. 舍吾皮肉 → 37. 断汝筋骨: switch enchantment after being hit ---
         tryFleshToBoneBreak(defender);
+    }
+
+    private static final ResourceLocation INCOMING_EVENT_MULT = rl("incoming_event_mult");
+
+    /**
+     * 收到伤害统一结算: 本伤害事件内受击侧易伤/减伤的总乘积 → incoming_damage 事件临时聚合
+     * → amount × 属性值 → 清除(下一次事件重算)。副作用函数(标记过期清理等)仍各自调用。
+     */
+    private static float applyIncomingSettlement(LivingEntity defender, DamageSource source, float amount) {
+        double product = 1.0D;
+        // My Sea Domain 标记易伤: +30%~60%(1200 tick 内)
+        product *= mySeaDomainVulnerabilityFactor(defender);
+        // Prophet's Call 标记: ×2.7
+        product *= prophetsCallFactor(defender);
+        // 舍吾皮肉(受伤+30%)/断汝筋骨(受伤-30%): 主手状态(穿戴即对本次来源? 原在护甲前, 现移到护甲后)
+        // TODO(护甲前批): 困兽-50%/急速攀升/冬痕×1.5/pale×1.3/apex×0.4/luxurious×1.5/ceaseless/目灯×0.5
+        //                —— 那些在 onLivingHurt(护甲前), 语义需确认后迁移; 本函数先收 onLivingDamage 段既有项
+        setIncomingDamage(defender, INCOMING_EVENT_MULT, product);
+        amount = applyIncomingDamageAttributes(defender, amount);
+        // 清除事件临时聚合(幂等)
+        var inst = defender.getAttribute(com.zhonz.moreenchantments.attribute.ZhonzAttributes.INCOMING_DAMAGE);
+        if (inst != null) inst.removeModifier(INCOMING_EVENT_MULT);
+        return amount;
+    }
+
+    private static double mySeaDomainVulnerabilityFactor(LivingEntity defender) {
+        CompoundTag targetData = getEntityData(defender);
+        if (!targetData.contains(KEY_MY_SEA_DOMAIN_START)) return 1.0D;
+        long elapsed = defender.level().getGameTime() - targetData.getLong(KEY_MY_SEA_DOMAIN_START);
+        if (elapsed > 1200) {
+            targetData.remove(KEY_MY_SEA_DOMAIN_START);
+            return 1.0D;
+        }
+        float vulnerability;
+        if (elapsed < 200) {
+            vulnerability = 0.30f;
+        } else if (elapsed < 600) {
+            vulnerability = 0.30f + 0.30f * ((float) (elapsed - 200) / 400f);
+        } else {
+            vulnerability = 0.60f;
+        }
+        return 1.0f + vulnerability;
+    }
+
+    private static double prophetsCallFactor(LivingEntity defender) {
+        CompoundTag data = getEntityData(defender);
+        if (!data.getBoolean(KEY_PROPHETS_CALL_ACTIVE)) return 1.0D;
+        if (defender.level().getGameTime() >= data.getLong(KEY_PROPHETS_CALL_UNTIL)) {
+            data.remove(KEY_PROPHETS_CALL_ACTIVE);
+            data.remove(KEY_PROPHETS_CALL_UNTIL);
+            return 1.0D;
+        }
+        return 2.7D; // 170% more = 2.7x
     }
 
     private static void tryFleshToBoneBreak(LivingEntity defender) {
@@ -1002,36 +1053,14 @@ public class ModEventHandlers {
         data.putInt(KEY_EMERGENCY_RESCUE_CD, 200);
     }
 
+    /** 已迁入 incoming_damage 通道(mySeaDomainVulnerabilityFactor), 保留文档对照。 */
     private static float applyMySeaDomainVulnerability(LivingEntity defender, float amount) {
-        CompoundTag targetData = getEntityData(defender);
-        if (!targetData.contains(KEY_MY_SEA_DOMAIN_START)) return amount;
-
-        long elapsed = defender.level().getGameTime() - targetData.getLong(KEY_MY_SEA_DOMAIN_START);
-        if (elapsed > 1200) {
-            targetData.remove(KEY_MY_SEA_DOMAIN_START);
-            return amount;
-        }
-
-        float vulnerability;
-        if (elapsed < 200) {
-            vulnerability = 0.30f;
-        } else if (elapsed < 600) {
-            vulnerability = 0.30f + 0.30f * ((float) (elapsed - 200) / 400f);
-        } else {
-            vulnerability = 0.60f;
-        }
-        return amount * (1.0f + vulnerability);
+        return amount;
     }
 
+    /** 已迁入 incoming_damage 通道(prophetsCallFactor), 保留文档对照。 */
     private static float applyProphetsCallBonus(LivingEntity defender, float amount) {
-        CompoundTag data = getEntityData(defender);
-        if (!data.getBoolean(KEY_PROPHETS_CALL_ACTIVE)) return amount;
-        if (defender.level().getGameTime() >= data.getLong(KEY_PROPHETS_CALL_UNTIL)) {
-            data.remove(KEY_PROPHETS_CALL_ACTIVE);
-            data.remove(KEY_PROPHETS_CALL_UNTIL);
-            return amount;
-        }
-        return amount * 2.7f; // 170% more = 2.7x
+        return amount;
     }
 
     // ===================================================================
@@ -2589,6 +2618,19 @@ public class ModEventHandlers {
     private static void setDamageMultiplier(LivingEntity entity, ResourceLocation id, double multiplier) {
         com.zhonz.moreenchantments.common.damage.UnifiedDamageEngine.setDamageMultiplier(
                 entity.getAttribute(com.zhonz.moreenchantments.attribute.ZhonzAttributes.DAMAGE_MULTIPLIER), id, multiplier);
+    }
+
+    /** 收到伤害乘数写入: 受击者 incoming_damage 聚合(总乘积, 默认1)。委托引擎。 */
+    private static void setIncomingDamage(LivingEntity defender, ResourceLocation id, double product) {
+        com.zhonz.moreenchantments.common.damage.UnifiedDamageEngine.setIncomingDamage(
+                defender.getAttribute(com.zhonz.moreenchantments.attribute.ZhonzAttributes.INCOMING_DAMAGE), id, product);
+    }
+
+    /** 收到伤害统一结算: final = amount × defender.incoming_damage(默认1)。护甲结算后调用。委托引擎。 */
+    private static float applyIncomingDamageAttributes(LivingEntity defender, float amount) {
+        double incoming = defender.getAttributeValue(com.zhonz.moreenchantments.attribute.ZhonzAttributes.INCOMING_DAMAGE);
+        return com.zhonz.moreenchantments.common.damage.UnifiedDamageEngine.settleIncoming(
+                defender.getName().getString(), amount, incoming);
     }
 
     // ===================================================================

@@ -44,6 +44,15 @@ public final class ZhonzAttributes {
             () -> new RangedAttribute("attribute." + MODID + ".flat_damage", 0.0D, -1.0E9D, 1.0E9D)
                     .setSyncable(true));
 
+    /**
+     * 收到伤害通道(defender 侧, default 1): 最终受到伤害 = 护甲结算后伤害 × incoming_damage。
+     * 易伤(&gt;1, 如燃烧黄昏火焰易伤/冬痕/先知标记)与减伤(&lt;1, 如困兽-50%/急速攀升)统一写此属性;
+     * 各乘数经独立 modifier 乘积聚合(默认 1, ADD_VALUE 写 mult-1), 结算一次乘。
+     */
+    public static final DeferredHolder<Attribute, Attribute> INCOMING_DAMAGE = ATTRIBUTES.register("incoming_damage",
+            () -> new RangedAttribute("attribute." + MODID + ".incoming_damage", 1.0D, 0.0D, 1.0E9D)
+                    .setSyncable(true));
+
     private ZhonzAttributes() {
     }
 

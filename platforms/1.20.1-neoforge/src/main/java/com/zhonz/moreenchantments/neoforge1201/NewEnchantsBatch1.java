@@ -319,7 +319,7 @@ public final class NewEnchantsBatch1 {
             frostish = true;
         }
         if (!frostish) return;
-        event.setAmount(event.getAmount() * 1.5f); // 冬痕: 冰霜伤害 +50%
+        // 乘法已迁 incoming_damage 通道(护甲后 ForgeEventHandler1201 按同一判定乘); 本函数仅保留判定逻辑对照
     }
 
     /** 75. 唯有命运 —— 生命不低于 1(1.21 源函数: ModEventHandlers#applyUnyieldingFateInvuln /

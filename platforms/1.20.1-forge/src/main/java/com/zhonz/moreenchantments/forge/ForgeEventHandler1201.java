@@ -134,9 +134,42 @@ public final class ForgeEventHandler1201 {
             event.setAmount(amount);
         }
         // 收到伤害通道(round-incoming): 最终受到伤害 = 护甲后伤害 × defender.incoming_damage
-        // (易伤>1 减伤<1; 1.20.1 平台: 效果已由各 Batch 按 1.20.1 语义挂接, 属性注册于 ZhonzAttributes1201)
+        // (易伤>1 减伤<1)。事件条件易伤(冬痕冰霜×1.5 / 惨白标记×1.3)在此写 defender 事件临时聚合,
+        // 与主工程 1.21 applyIncomingSettlement 语义一致(护甲后统一乘, 乘后清除)。
+        double eventIncoming = incomingConditionalFactor(defender, source);
+        UnifiedDamageEngine.setIncomingDamage(
+                defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
+                new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_event_mult"),
+                eventIncoming);
         double incoming = defender.getAttributeValue(ZhonzAttributes1201.INCOMING_DAMAGE.get());
         amount = UnifiedDamageEngine.settleIncoming(defender.getName().getString(), event.getAmount(), incoming);
         event.setAmount(amount);
+        // 清除事件临时聚合(幂等; 下一次伤害事件重算)
+        UnifiedDamageEngine.setIncomingDamage(
+                defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
+                new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_event_mult"),
+                1.0);
+    }
+
+    /** 事件条件型受击易伤因子(1.20.1): 冬痕(冰霜+50%)×惨白标记(×1.3)。与 1.21 winterMarkFactor/paleVulnerabilityFactor 一致。 */
+    private static double incomingConditionalFactor(LivingEntity defender, net.minecraft.world.damagesource.DamageSource source) {
+        double product = 1.0;
+        net.minecraft.nbt.CompoundTag data = com.zhonz.moreenchantments.common.storage.EntityDataStorage.getEntityData(defender);
+        // 74. 冬痕(雪的殇标记): 冰霜伤害 ×1.5
+        long until = data.getLong("zhonz_winter_mark_until");
+        if (until > 0 && defender.level().getGameTime() < until) {
+            boolean frostish = source.is(net.minecraft.tags.DamageTypeTags.IS_FREEZING);
+            if (!frostish && source.getEntity() instanceof net.minecraft.world.entity.LivingEntity atk
+                    && com.zhonz.moreenchantments.forge.EnchantmentLookup1201.INSTANCE.mainHand(atk, "snow_wound") > 0) {
+                frostish = true;
+            }
+            if (frostish) product *= 1.5;
+        }
+        // 56. 惨白的午夜标记: ×1.3
+        long paleUntil = data.getLong("zhonz_pale_midnight_vuln_until");
+        if (paleUntil > 0 && defender.level().getGameTime() < paleUntil) {
+            product *= 1.3;
+        }
+        return product;
     }
 }

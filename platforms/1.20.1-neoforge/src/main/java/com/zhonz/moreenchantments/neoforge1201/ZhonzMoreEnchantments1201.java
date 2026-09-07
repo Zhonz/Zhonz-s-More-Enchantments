@@ -42,6 +42,7 @@ public class ZhonzMoreEnchantments1201 {
             event.add(type, ZhonzAttributes1201.BONUS_DAMAGE.get());
             event.add(type, ZhonzAttributes1201.DAMAGE_MULTIPLIER.get());
             event.add(type, ZhonzAttributes1201.FLAT_DAMAGE.get());
+            event.add(type, ZhonzAttributes1201.INCOMING_DAMAGE.get());
         }
     }
 }

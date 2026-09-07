@@ -133,5 +133,10 @@ public final class ForgeEventHandler1201 {
 
             event.setAmount(amount);
         }
+        // 收到伤害通道(round-incoming): 最终受到伤害 = 护甲后伤害 × defender.incoming_damage
+        // (易伤>1 减伤<1; 1.20.1 平台: 效果已由各 Batch 按 1.20.1 语义挂接, 属性注册于 ZhonzAttributes1201)
+        double incoming = defender.getAttributeValue(ZhonzAttributes1201.INCOMING_DAMAGE.get());
+        amount = UnifiedDamageEngine.settleIncoming(defender.getName().getString(), event.getAmount(), incoming);
+        event.setAmount(amount);
     }
 }

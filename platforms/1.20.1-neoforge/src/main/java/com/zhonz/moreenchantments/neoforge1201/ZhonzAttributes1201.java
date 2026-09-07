@@ -31,6 +31,11 @@ public final class ZhonzAttributes1201 {
             () -> new RangedAttribute("attribute." + CommonConstants1201.MODID + ".flat_damage", 0.0D, -1.0E9D, 1.0E9D)
                     .setSyncable(true));
 
+    /** 收到伤害通道(default 1): 最终受到伤害 = 护甲后伤害 × incoming_damage(易伤>1 减伤<1)。 */
+    public static final RegistryObject<Attribute> INCOMING_DAMAGE = ATTRIBUTES.register("incoming_damage",
+            () -> new RangedAttribute("attribute." + CommonConstants1201.MODID + ".incoming_damage", 1.0D, 0.0D, 1.0E9D)
+                    .setSyncable(true));
+
     private ZhonzAttributes1201() {
     }
 }

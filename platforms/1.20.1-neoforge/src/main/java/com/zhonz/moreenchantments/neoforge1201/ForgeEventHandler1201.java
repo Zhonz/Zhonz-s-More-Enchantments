@@ -134,8 +134,9 @@ public final class ForgeEventHandler1201 {
             event.setAmount(amount);
         }
         // 收到伤害通道(round-incoming): 最终受到伤害 = 护甲后伤害 × defender.incoming_damage
-        // (易伤>1 减伤<1)。事件条件易伤(冬痕冰霜×1.5 / 惨白标记×1.3)在此写 defender 事件临时聚合,
-        // 与主工程 1.21 applyIncomingSettlement 语义一致(护甲后统一乘, 乘后清除)。
+        // (易伤>1 减伤<1)。先刷新 tick 常驻减伤/易伤聚合(穿戴+状态, 与 1.21 refreshIncomingAggregate 对称),
+        // 再叠加事件条件易伤(冬痕冰霜×1.5 / 惨白标记×1.3), 统一乘后清除。
+        refreshIncomingAggregate1201(defender);
         double eventIncoming = incomingConditionalFactor(defender, source);
         UnifiedDamageEngine.setIncomingDamage(
                 defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
@@ -144,11 +145,43 @@ public final class ForgeEventHandler1201 {
         double incoming = defender.getAttributeValue(ZhonzAttributes1201.INCOMING_DAMAGE.get());
         amount = UnifiedDamageEngine.settleIncoming(defender.getName().getString(), event.getAmount(), incoming);
         event.setAmount(amount);
-        // 清除事件临时聚合(幂等; 下一次伤害事件重算)
+        // 清除事件临时聚合与 tick 聚合(幂等; 下一次伤害事件重算)
         UnifiedDamageEngine.setIncomingDamage(
                 defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
                 new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_event_mult"),
                 1.0);
+        UnifiedDamageEngine.setIncomingDamage(
+                defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
+                new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_tick_aggregate"),
+                1.0);
+    }
+
+    /** tick 常驻受击减伤/易伤聚合(1.20.1, 与 1.21 refreshIncomingAggregate 判定一致): 穿戴+自身状态可判定项。 */
+    private static void refreshIncomingAggregate1201(LivingEntity defender) {
+        double product = 1.0;
+        net.minecraft.world.entity.ai.attributes.AttributeInstance inst =
+                defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get());
+        if (inst == null) return;
+        com.zhonz.moreenchantments.common.damage.EnchantmentLevelLookup lv = EnchantmentLookup1201.INSTANCE;
+        // 45. 顶点(主/副手): 受伤 -60% → ×0.4
+        if (lv.mainHand(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.APEX) > 0
+                || lv.slot(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.APEX, net.minecraft.world.entity.EquipmentSlot.OFFHAND) > 0) {
+            product *= 0.4;
+        }
+        // 46. 困兽之斗(头盔, 生命<25%): 受伤 -50% → ×0.5
+        if (lv.slot(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.CORNERED_BEAST, net.minecraft.world.entity.EquipmentSlot.HEAD) > 0
+                && defender.getHealth() <= defender.getMaxHealth() * 0.25f) {
+            product *= 0.5;
+        }
+        // 36/37. 舍吾皮肉(+30%)/断汝筋骨(-30%): 主手
+        if (lv.mainHand(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.FLESH_SACRIFICE) > 0) {
+            product *= 1.3;
+        } else if (lv.mainHand(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.BONE_BREAK) > 0) {
+            product *= 0.7;
+        }
+        UnifiedDamageEngine.setIncomingDamage(inst,
+                new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_tick_aggregate"),
+                product);
     }
 
     /** 事件条件型受击易伤因子(1.20.1): 冬痕(冰霜+50%)×惨白标记(×1.3)。与 1.21 winterMarkFactor/paleVulnerabilityFactor 一致。 */

@@ -73,6 +73,18 @@
 - 验证边界: 1.20.1 dev 无 attributeslib remap → mixin 运行时注入验证需真实客户端(生产 mods 双装)
 - GitHub: 已推送 Zhonz/Zhonz-s-More-Enchantments(干净单提交历史 7b3227e, 8MB; 清除误入 846MB hprof)
 
+## 收到伤害通道(incoming_damage, 用户新增)
+- 语义: 最终受到伤害 = 经保护附魔与护甲结算后的伤害 × incoming_damage(默认 1; 易伤>1 减伤<1)
+- 主工程实现: ZhonzAttributes.INCOMING_DAMAGE(注册+全 LivingEntity 挂载); common 引擎
+  settleIncoming(纯函数)/setIncomingDamage(聚合写入); onLivingDamage 受击段:
+  refreshIncomingAggregate(tick 常驻: apex×0.4/cornered低血×0.5/luxurious满血×1.5/flesh_bone×1.3或0.7/
+  rapid y<0减伤) + applyIncomingSettlement(事件条件: 海疆易伤/先知×2.7/冬痕冰霜×1.5/燃烧黄昏火焰/
+  惨白标记×1.3/不停狩叠层) → 统一乘
+- 护甲前(onLivingHurt)已移除全部易伤/减伤乘法, 仅保留免疫/保命/标记副作用
+- 实测: cornered低血 zombie 受击 40.0×0.5=20.0(IncomingDamage debug 确认)
+- 1.20.1 forge/neoforge 已同步(INCOMING_DAMAGE 注册+挂载+settleIncoming 接入); 三平台 compile ✅
+- testall 63/63 ✅(受击侧数值断言需后续受击测试命令; testall 项全为攻击侧)
+
 ## 版本差异要点(迁移到 1.20.1 Forge 时注意)
 - 1.20.1 Forge:无 LivingIncomingDamageEvent/DamageContainer(1.21 NeoForge 伤害管线大改),附魔为代码注册非 1.21 数据驱动;1.21.1 依赖 Mojang mapped 方法签名,mixin 目标随版本不同
 - Apothic Attributes 1.20.1 Forge 存在(独立版本),但 API/事件内部不同,需逐项核对

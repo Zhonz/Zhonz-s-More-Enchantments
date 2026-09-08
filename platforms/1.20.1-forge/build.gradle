@@ -44,11 +44,12 @@ unimined.minecraft(sourceSets.main) {
 }
 
 dependencies {
-    // Apothic dev 注入待联调(见文档); 壳阶段无外部 mod 依赖
-    // 效果移植批 1(TickEffectsBatch1)起引用 attributeslib(1.20.1 Apothic)的 ALObjects 属性常量。
-    // compileOnly: 仅编译期引用字段; 不进 run classpath —— 正式联调仍按 UNIMINED_MIGRATION
-    // "打 jar 放真实 mods 目录"(attributeslib 由生产环境 mods 提供)。
+    // Apothic(attributeslib)1.20.1: 编译期引用 ALObjects 常量
     compileOnly("dev.shadowsoffire:ApothicAttributes:${apothic_attributes_version}")
+    // dev 服务端运行注入: UniMined 对 modImplementation 做 remap 后进 run classpath,
+    // 使 attributeslib 的 ALObjects 在本地服务端可用(否则 mixin 类加载 ClassNotFound)。
+    modImplementation("dev.shadowsoffire:ApothicAttributes:${apothic_attributes_version}")
+    modImplementation("dev.shadowsoffire:Placebo:1.20.1-8.6.3")
 }
 
 tasks.withType(JavaCompile).configureEach {

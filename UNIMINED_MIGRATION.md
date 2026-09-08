@@ -185,6 +185,22 @@ src/main/resources/META-INF/{neoforge.mods.toml,mods.toml}
   +16 mixin+接线, compile+jar)✅ / NeoForge 1.20.1(同 forge 同步, compile)✅
 - **剩余**: 数值验证(人工/生产 jar); mixin 1.20.1 重写; 剩余 tick 维护补全; neoforge jar 冒烟
 
+## 6.8 三平台本地服务端实测(round-verify, 全部通过)
+在本地服务端实机运行三个平台并验证核心功能(不破坏项目结构):
+| 平台 | 启动 | 附魔注册 | incoming 通道 | 攻击乘伤通道 |
+|---|---|---|---|---|
+| NeoForge 1.21.1(主工程) | runServer ✅ | 89 附魔(/zhonztest) | ✅ | ✅ testall **63/63** |
+| Forge 1.20.1 | `Done (27.1s)` ✅ | ✅ 装备 NBT 确认 | ✅ **打 8 扣 4**(×0.5 减伤) | ✅ **打 8 扣 48**(bone_break ×6) |
+| NeoForge 1.20.1 | ✅ | ✅ | ✅ **打 8 扣 4** | ✅ **打 8 扣 48** |
+
+- 关键突破: **modImplementation(Apothic+Placebo)** 让 UniMined remap 第三方 mod 进 dev run classpath,
+  解决此前 attributeslib mixin SRG 失配(dev 无法启动)问题 → 1.20.1 可在本地服务端完整实测
+- 1.20.1 测试方法(无 /zhonztest): 原版命令 `/item replace` 附魔装备 + `/attribute` 血量 +
+  `/damage ... by <attacker>`; tools/rcon.js 增加 `--file` 支持(绕开 shell 吞引号)
+- 修复: NeoForge 1.20.1 的 mods.toml 依赖 modId 应为 **"forge"**(47.x 分叉初期沿用 forge id,
+  非 "neoforge"), 否则报 "neoforge is not installed"
+- 复现命令: 平台目录 `gradlew runServer`(需 run/server/eula.txt + server.properties enable-rcon=true)
+
 ## 五、风险与缓解
 - 附魔 JSON 无法跨版本 → 1.20.1 代码注册需重写,工作量≈新实现;建议按"核心 89 个机制清单"驱动逐条移植,并复用 ENCHANTMENTS.md。
 - mixin 字节码目标差异 → 双 mixin 组 + 单测逐版本跑。

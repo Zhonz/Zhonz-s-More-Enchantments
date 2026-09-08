@@ -12,7 +12,7 @@ Zhonz's More Enchantments — 1.20.1 NeoForge 平台构建。
 统一增伤属性通道(bonus_damage / damage_multiplier / flat_damage)。
 '''
 [[dependencies.zhonz_more_enchantments]]
-    modId="neoforge"
+    modId="forge"
     mandatory=true
     versionRange="[47,)"
     ordering="NONE"

@@ -16,8 +16,10 @@ function packet(id, type, payload) {
   return Buffer.concat([prefix, body]);
 }
 
-const cmd = process.argv[2];
-if (!cmd) { console.error('usage: node rcon.js <command>'); process.exit(1); }
+const cmd = process.argv[2] === '--file'
+  ? require('fs').readFileSync(process.argv[3], 'utf8').replace(/\r?\n$/, '')
+  : process.argv[2];
+if (!cmd) { console.error('usage: node rcon.js <command> | --file <path>'); process.exit(1); }
 
 const sock = net.connect(PORT, HOST, () => {
   sock.write(packet(1, 3, PASSWORD));

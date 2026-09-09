@@ -295,6 +295,13 @@ public final class NewEnchantsBatch1 {
         LivingEntity defender = event.getEntity();
         if (defender.level().isClientSide()) return;
         if (event.getAmount() <= 0) return;
+        // 剥壳(shell_strip): 记录护甲前原始伤害(1.21 onLivingHurt 同相位写入 KEY_SHELL_STRIP_RAW,
+        // 由 ForgeEventHandler1201 的攻击段 applyShellStrip 消费 → 真伤 = 被护甲减免的部分 × 比例)
+        if (event.getSource().getEntity() instanceof LivingEntity shellAtk) {
+            SideEffectsBatch1.recordShellStripRaw(shellAtk, defender, event.getAmount());
+        }
+        // 假面的愚者: 佩戴者受击时随机增益/减益(1.21 onLivingHurt 同相位)
+        SideEffectsBatch1.applyFoolsMaskOnHit(defender);
         // 调用顺序与 1.21 onLivingHurt 一致:
         // applyWinterMarkVulnerability → applyUnyieldingFateInvuln → applyEyeLampMark
         applyWinterMarkVulnerability(defender, event);
@@ -480,6 +487,17 @@ public final class NewEnchantsBatch1 {
         LivingEntity victim = event.getEntity();
         if (victim.level().isClientSide()) return;
         DamageSource source = event.getSource();
+
+        // 死亡侧链路(与 1.21 onLivingDeath 顺序一致):
+        // 1) 血路: 记录击杀(任意击杀者, 供 computeBonusPercent 读 kills)
+        SideEffectsBatch1.recordBloodPathKill(source, victim);
+        // 2) 保命附魔(victim 侧, 命中即取消死亡并 return):
+        //    智能图腾(背包图腾自动使用) → 永劫回归(满血复活+6000tick 冷却) → 神圣守护(四甲槽保命)
+        if (SideEffectsBatch1.trySmartTotem(victim, event)) return;
+        if (SideEffectsBatch1.tryReturnFromHell(victim, event)) return;
+        SideEffectsBatch1.tryDivineProtection(victim, event);
+
+        // 3) 庄严哀悼: 攻击者侧击杀溅射
         Entity sourceEntity = source.getEntity();
         if (!(sourceEntity instanceof LivingEntity attacker)) return;
         if (mainHand(attacker, EnchantIds.SOLEMN_MOURNING) <= 0) return;

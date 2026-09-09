@@ -183,8 +183,8 @@ public final class UnifiedDamageEngine {
      */
     public static void applyEventMultiplierTemporary(net.minecraft.world.entity.ai.attributes.AttributeInstance inst, ResourceLocation id, double factor) {
         if (inst == null) return;
+        removeModifierById(inst, id); // 防御性: 先清残留(即使 factor==1 也保证无残留)
         if (Math.abs(factor - 1.0D) < 0.0001D) return;
-        removeModifierById(inst, id);
         double current = inst.getValue();
         double delta = current * (factor - 1.0D);
         addValueModifier(inst, id, delta);

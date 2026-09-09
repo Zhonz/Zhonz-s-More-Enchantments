@@ -107,6 +107,7 @@ public final class ForgeEventHandler1201 {
             double bonus = attacker.getAttributeValue(ZhonzAttributes1201.BONUS_DAMAGE.get());
             double mult = attacker.getAttributeValue(ZhonzAttributes1201.DAMAGE_MULTIPLIER.get());
             double flat = attacker.getAttributeValue(ZhonzAttributes1201.FLAT_DAMAGE.get());
+            float preUnified = amount; // 结算前基准(与 1.21 一致: 溅射/剥壳副作用以结算前 amount 为基准)
             amount = UnifiedDamageEngine.settle(attacker.getName().getString(), amount, bonus, mult, flat);
 
             UnifiedDamageEngine.clearEventMultiplierTemporary(
@@ -116,20 +117,33 @@ public final class ForgeEventHandler1201 {
                     attacker.getAttribute(ZhonzAttributes1201.BONUS_DAMAGE.get()),
                     new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "event_bonus_temp"));
 
-            // 攻击命中副作用(批 B, 以最终结算后 amount 为基准, 与 1.21 架构一致)
+            // 攻击命中副作用(与 1.21 同相位: 溅射/剥壳/爆裂黎明以"结算前 amount"为基准)
             amount = SideEffectsBatch1.applySanction(attacker, defender, amount);
-            SideEffectsBatch1.applyShellStrip(attacker, defender, amount);
+            SideEffectsBatch1.applyShellStrip(attacker, defender, preUnified);
             SideEffectsBatch1.applySelfDoubt(attacker, defender);
             SideEffectsBatch1.applyFlippingCoin(attacker, defender);
             SideEffectsBatch1.applyGrievousWound(attacker, defender);
-            SideEffectsBatch1.applyAreaStrike(attacker, defender, source, attacker.getMainHandItem(), amount);
-            SideEffectsBatch1.applyExplosiveDawn(attacker, defender, source, attacker.getMainHandItem(), amount);
+            SideEffectsBatch1.applyAreaStrike(attacker, defender, source, attacker.getMainHandItem(), preUnified);
+            SideEffectsBatch1.applyExplosiveDawn(attacker, defender, source, attacker.getMainHandItem(), preUnified);
             SideEffectsBatch1.applyWeepingChildIgnite(attacker, defender);
             SideEffectsBatch1.applyBurningDusk(attacker, defender);
             SideEffectsBatch1.applyHaltSlow(attacker, defender);
             SideEffectsBatch1.applyPaleMidnightMark(attacker, defender);
             SideEffectsBatch1.applyFoolsMaskSideEffects(attacker, defender);
             SideEffectsBatch1.applySuppression(attacker, defender);
+            // 16. 血泣: 自伤 10/7/4(1.21 applyBloodWeepCost; 加伤已在 common computeBonusPercent)
+            int bloodWeep = com.zhonz.moreenchantments.neoforge1201.EnchantmentLookup1201.INSTANCE
+                    .mainHand(attacker, "blood_weep");
+            if (bloodWeep > 0) {
+                float hpCost = bloodWeep == 1 ? 10.0f : (bloodWeep == 2 ? 7.0f : 4.0f);
+                attacker.setHealth(Math.max(0.0f, attacker.getHealth() - hpCost));
+            }
+            // 49. 不停狩: 攻击侧叠层更新(common computeBonusPercent 读该层数, 上限 5)
+            if (com.zhonz.moreenchantments.neoforge1201.EnchantmentLookup1201.INSTANCE
+                    .mainHand(attacker, "ceaseless_hunt") > 0) {
+                updateCeaselessHunt1201(com.zhonz.moreenchantments.common.storage.EntityDataStorage
+                        .getData(attacker), attacker.level().getGameTime());
+            }
 
             event.setAmount(amount);
         }
@@ -138,7 +152,9 @@ public final class ForgeEventHandler1201 {
         // 再叠加事件条件易伤(冬痕冰霜×1.5 / 惨白标记×1.3), 统一乘后清除。
         refreshIncomingAggregate1201(defender);
         double eventIncoming = incomingConditionalFactor(defender, source);
-        UnifiedDamageEngine.setIncomingDamage(
+        // 事件乘数必须以"当前属性值"为基数追加, 才能与 tick 常驻聚合保持严格乘积
+        // (属性 ADD_VALUE 加和: 直接写 product-1 会变成 product_t + product_e - 1)。
+        UnifiedDamageEngine.applyEventMultiplierTemporary(
                 defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
                 new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_event_mult"),
                 eventIncoming);
@@ -179,6 +195,16 @@ public final class ForgeEventHandler1201 {
         } else if (lv.mainHand(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.BONE_BREAK) > 0) {
             product *= 0.7;
         }
+        // 60. 奢侈的希望(盔甲, 满血): 受伤 +50% → ×1.5
+        if (lv.anySlot(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.LUXURIOUS_HOPE) > 0
+                && defender.getHealth() >= defender.getMaxHealth() - 0.5f) {
+            product *= 1.5;
+        }
+        // 52. 极速攀升(靴子, y<0): 受伤 ×(1 + y/100)
+        if (lv.slot(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.RAPID_ASCENT, net.minecraft.world.entity.EquipmentSlot.FEET) > 0) {
+            double y = defender.getY();
+            if (y < 0) product *= (1.0 + y * 0.01);
+        }
         UnifiedDamageEngine.setIncomingDamage(inst,
                 new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_tick_aggregate"),
                 product);
@@ -203,6 +229,48 @@ public final class ForgeEventHandler1201 {
         if (paleUntil > 0 && defender.level().getGameTime() < paleUntil) {
             product *= 1.3;
         }
+        // 43. 燃烧的黄昏: 火焰来源 ×(1 + 叠层百分比)
+        float duskPct = data.getFloat("zhonz_burning_dusk_pct");
+        if (duskPct > 0 && source.is(net.minecraft.tags.DamageTypeTags.IS_FIRE)) {
+            product *= (1.0 + duskPct);
+        }
+        // 11. 我的海疆标记易伤: +30%~60%(1200 tick 内)
+        long seaStart = data.getLong("zhonz_my_sea_domain_start");
+        if (seaStart > 0) {
+            long elapsed = defender.level().getGameTime() - seaStart;
+            if (elapsed > 1200) {
+                data.remove("zhonz_my_sea_domain_start");
+            } else {
+                double vuln = elapsed < 200 ? 0.30 : (elapsed < 600 ? 0.30 + 0.30 * ((elapsed - 200) / 400.0) : 0.60);
+                product *= (1.0 + vuln);
+            }
+        }
+        // 23. 先知之唤标记: ×2.7
+        if (data.getBoolean("zhonz_prophets_call_active")) {
+            if (defender.level().getGameTime() >= data.getLong("zhonz_prophets_call_until")) {
+                data.remove("zhonz_prophets_call_active");
+                data.remove("zhonz_prophets_call_until");
+            } else {
+                product *= 2.7;
+            }
+        }
+        // 49. 不停狩: 叠层受击减伤 ×(1 - 0.10×层)
+        if (com.zhonz.moreenchantments.neoforge1201.EnchantmentLookup1201.INSTANCE
+                .mainHand(defender, "ceaseless_hunt") > 0) {
+            int stacks = updateCeaselessHunt1201(data, defender.level().getGameTime());
+            if (stacks > 0) product *= (1.0 - 0.10 * stacks);
+        }
         return product;
+    }
+
+    /** 不停狩叠层更新(1.20.1, 与 1.21 updateCeaselessHunt 一致): 5 秒内连续战斗 +1 层, 上限 5。 */
+    private static int updateCeaselessHunt1201(net.minecraft.nbt.CompoundTag data, long now) {
+        long last = data.getLong("zhonz_ceaseless_last");
+        int stacks = data.getInt("zhonz_ceaseless_stacks");
+        if (last != 0 && now - last > 100) stacks = 0; // 5 秒未战斗则清零
+        stacks = Math.min(5, stacks + 1);
+        data.putInt("zhonz_ceaseless_stacks", stacks);
+        data.putLong("zhonz_ceaseless_last", now);
+        return stacks;
     }
 }

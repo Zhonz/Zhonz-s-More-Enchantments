@@ -82,12 +82,20 @@ public class ItemStackDurabilityMixin {
         }
 
         // 千万年永恒屹立: 耐久消耗 -80%
+        int originalAmount = amount;
         if (enchLevel(self, EnchantIds.ETERNAL_STANDING) > 0) {
             amount = Math.max(1, (int) Math.ceil(amount * 0.2));
         }
 
         int toughnessLevel = enchLevel(self, EnchantIds.TOUGHNESS);
-        if (toughnessLevel <= 0) return;
+        if (toughnessLevel <= 0) {
+            // 无坚韧: 若永恒屹立已削减 amount, 必须自行落盘(否则局部变量修改被丢弃 → -80% 失效)
+            if (amount != originalAmount) {
+                self.setDamageValue(Math.min(self.getMaxDamage(), self.getDamageValue() + amount));
+                ci.cancel();
+            }
+            return;
+        }
 
         int maxDamage = self.getMaxDamage();
         int currentDamage = self.getDamageValue();

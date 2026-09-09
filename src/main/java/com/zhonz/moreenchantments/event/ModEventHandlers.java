@@ -545,7 +545,11 @@ public class ModEventHandlers {
         product *= paleVulnerabilityFactor(defender);
         // 49. 不停狩: 叠层受伤 -(10%×stacks)(主手, 叠层更新一次)
         product *= ceaselessHuntFactor(defender);
-        setIncomingDamage(defender, INCOMING_EVENT_MULT, product);
+        // 事件条件乘数必须以"当前属性值"为基数追加, 才能与 tick 常驻聚合保持严格乘积
+        // (属性 ADD_VALUE 是加和: 直接写 product-1 会变成 product_t + product_e - 1)。
+        com.zhonz.moreenchantments.common.damage.UnifiedDamageEngine.applyEventMultiplierTemporary(
+                defender.getAttribute(com.zhonz.moreenchantments.attribute.ZhonzAttributes.INCOMING_DAMAGE),
+                INCOMING_EVENT_MULT, product);
         amount = applyIncomingDamageAttributes(defender, amount);
         // 清除事件临时聚合(幂等)
         var inst = defender.getAttribute(com.zhonz.moreenchantments.attribute.ZhonzAttributes.INCOMING_DAMAGE);

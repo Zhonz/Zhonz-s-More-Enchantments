@@ -50,6 +50,7 @@ public final class EnchantWiring1201 {
         TickEffectsBatch1.tickEtiquette(player, data);
         TickEffectsBatch1.tickPerfunctory(player, data);
         TickEffectsBatch1.tickCritWeapons(player, data);
+        TickEffectsBatch1.tickSelfishClearSky(player);
         TickEffectsBatch1.tickGoldWineCup(player, data);
         TickEffectsBatch1.tickKeenWill(player, data, tc);
         TickEffectsBatch1.tickSharpen(player);

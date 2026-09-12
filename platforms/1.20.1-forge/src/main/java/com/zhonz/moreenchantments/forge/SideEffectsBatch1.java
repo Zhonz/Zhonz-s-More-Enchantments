@@ -1,5 +1,6 @@
 package com.zhonz.moreenchantments.forge;
 
+import com.zhonz.moreenchantments.common.damage.EnchantSetPieces;
 import com.zhonz.moreenchantments.common.enchant.EnchantIds;
 import com.zhonz.moreenchantments.common.storage.EntityDataStorage;
 import net.minecraft.nbt.CompoundTag;
@@ -22,6 +23,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
+import net.minecraftforge.event.entity.living.LivingHealEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -688,5 +690,43 @@ public final class SideEffectsBatch1 {
             }
             return;
         }
+    }
+
+    // ===================================================================
+    // 90. 热烈诚挚希望 fervent_sincere_hope(1.21 源: ModEventHandlers#onFerventOverheal)
+    // 胸甲: 溢出治疗转临时生命(黄心), 上限 = 最大生命 100%; 六槽位有其他套装附魔时取消上限。
+    // 吸收值必须由 ABSORPTION 效果承载 —— 原版 tick 在无该效果时会把吸收值清零。
+    // ===================================================================
+    private static final int FERVENT_ABSORPTION_TICKS = 600;
+
+    @net.minecraftforge.eventbus.api.SubscribeEvent
+    public static void onFerventOverheal(LivingHealEvent event) {
+        LivingEntity entity = event.getEntity();
+        if (entity.level().isClientSide()) return;
+        if (EnchantmentLookup1201.INSTANCE.slot(entity, EnchantIds.FERVENT_SINCERE_HOPE, EquipmentSlot.CHEST) <= 0) return;
+
+        float amount = event.getAmount();
+        if (amount <= 0) return;
+        float missing = entity.getMaxHealth() - entity.getHealth();
+        float overflow = amount - missing;
+        if (overflow <= 0) return;
+
+        boolean setBonus = EnchantSetPieces.hasOtherPiece(entity, EnchantIds.FERVENT_SINCERE_HOPE,
+                (e, id, slot) -> EnchantmentLookup1201.INSTANCE.slot(e, id, slot));
+        double cap = setBonus ? Double.MAX_VALUE : entity.getMaxHealth();
+        double absorp = entity.getAbsorptionAmount();
+        double room = cap - absorp;
+        if (room > 0) {
+            double gained = Math.min(overflow, room);
+            double target = absorp + gained;
+            int amplifier = Math.max(0, (int) Math.ceil(target / 4.0) - 1);
+            entity.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, FERVENT_ABSORPTION_TICKS,
+                    amplifier, false, false, false));
+            entity.setAbsorptionAmount((float) target);
+        }
+
+        float heal = Math.min(amount, missing);
+        event.setAmount(heal > 0 ? heal : 0.0f);
+        if (heal <= 0) event.setCanceled(true);
     }
 }

@@ -2,7 +2,25 @@
 
 > 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
 
-## 最新状态(2026-09-12 晚,本轮收尾)
+## 最新状态(2026-09-12 晚二轮)
+- ✅ **新增附魔 90/91 + 暴击五件套口径重写**(用户口径: 六槽位任意"其他"一件)
+  - 90 热烈诚挚希望 `fervent_sincere_hope` / 91 自私澄澈天光 `selfish_clear_sky`(胸甲, 宝藏)
+  - 65/66/67 加强档判定从"同时附魔另两件"改为 `EnchantSetPieces.hasOtherPiece`(头盔/胸甲/护腿/靴子/主手/副手,
+    排除自身 → 任意其他一件); common 新类 `common/damage/EnchantSetPieces.java`(平台经 `EnchantmentLookup1201` 接)
+  - 90: `LivingHealEvent` 溢出治疗→吸收值, **必须用 `MobEffects.ABSORPTION` 承载**(原版 tick 无该效果会把吸收值清零;
+    原版不死图腾同样如此); 上限 = 最大生命 100%, 六槽位有其他套装附魔时取消
+  - 91: `HEALING_RECEIVED`(ADD_MULTIPLIED_BASE)= 暴击率×暴击伤害(套装时另乘增伤; Apothic heal 按该属性缩放治疗)
+  - 验证: **testall 65/65**、**settest 4/4**、**manifesttest 5/5**
+  - 三平台同步: 1.20.1 双平台已注册 90/91 并同步 crit 口径 + 溢出治疗(同 `SideEffectsBatch1`/`TickEffectsBatch1`)
+- ✅ **修复线上崩溃(1.3.0 缺陷)**: 投掷重锤 `thrown_mace` 无客户端渲染器 →
+  `EntityRenderDispatcher.shouldRender` NPE(右键松手投掷即崩)。修复: `ThrownMaceEntity implements ItemSupplier`
+  + `ZhonzMoreEnchantments.ClientRenderers` 注册 `ThrownItemRenderer`
+  - ⚠️ 客户端注册**必须加 dist 守卫**(`FMLEnvironment.dist.isClient()`): 否则专用服务端解析方法引用会加载
+    `net.minecraft.client.*` → `RuntimeDistCleaner` 直接判定 mod 加载失败。已实测服务端可正常启动。
+  - 加了启动自检 `[RenderCheck] thrown_mace renderer OK: ThrownItemRenderer`(客户端进世界后打日志)
+- 版本号 1.3.1; 发布前必须跑三平台 build + 回归
+
+## 最新状态(2026-09-12 晚,上一轮)
 - ✅ **「于此显圣」扩展到 4 条免死路径**(上个会话做到一半被框架崩溃打断,本轮完成)
   - 新增 `util/ManifestHelper`(共享: `hasManifest(ItemStack)` / `holdsManifest(LivingEntity)` / `burst(LivingEntity)`);
     三平台各有一套(`platforms/*/**/ManifestHelper1201.java`)

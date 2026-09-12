@@ -373,6 +373,14 @@ public final class ModEnchantments1201 {
             () -> new Enchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.WEAPON,
                     new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
                             EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
+    public static final RegistryObject<Enchantment> FERVENT_SINCERE_HOPE = ENCHANTMENTS.register("fervent_sincere_hope",
+            () -> new Enchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.ARMOR_CHEST,
+                    new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
+                            EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
+    public static final RegistryObject<Enchantment> SELFISH_CLEAR_SKY = ENCHANTMENTS.register("selfish_clear_sky",
+            () -> new Enchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.ARMOR_CHEST,
+                    new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
+                            EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
 
     private ModEnchantments1201() {
     }

@@ -1,5 +1,6 @@
 package com.zhonz.moreenchantments.neoforge1201;
 
+import com.zhonz.moreenchantments.common.damage.EnchantSetPieces;
 import com.zhonz.moreenchantments.common.enchant.EnchantIds;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -84,6 +85,8 @@ public final class TickEffectsBatch1 {
     private static final ResourceLocation SILENCE_CRIT_CHANCE_MODIFIER = rl("silence_in_depths_crit");
     private static final ResourceLocation FRENZIED_CRIT_DAMAGE_MODIFIER = rl("frenzied_bite_crit_damage");
     private static final ResourceLocation HEAVENFALL_CRIT_DAMAGE_MODIFIER = rl("heavenfall_crit_damage");
+    /** 91. 自私澄澈天光: 受治疗量经 HEALING_RECEIVED 吃到暴击/暴伤(套装时另加增伤)。 */
+    private static final ResourceLocation SELFISH_HEALING_MODIFIER = rl("selfish_clear_sky_healing");
     private static final ResourceLocation HEAVENFALL_DAMAGE_MODIFIER = rl("heavenfall_damage");
     private static final ResourceLocation GOLD_WINE_CUP_ATTACK_SPEED_MODIFIER = rl("gold_wine_cup_attack_speed");
     private static final ResourceLocation KEEN_WILL_ATTACK_MODIFIER = rl("keen_will_attack");
@@ -490,31 +493,63 @@ public final class TickEffectsBatch1 {
         boolean silence = hasEnchant(weapon, EnchantIds.SILENCE_IN_DEPTHS);
         boolean frenzied = hasEnchant(weapon, EnchantIds.FRENZIED_BITE);
         boolean heavenfall = hasEnchant(weapon, EnchantIds.SILENCED_HEAVENFALL);
-        int comboCount = (frenzied ? 1 : 0) + (heavenfall ? 1 : 0);
 
-        // 沉默沉入沉渊: 暴击率 = 最大生命×2% (有组合时×4%)
+        // 套装联动: 各附魔各自判定"除自己以外的其他套装附魔是否在身"(六槽位, 见 EnchantSetPieces)
+        boolean silenceCombo = silence && hasSetOtherPiece(player, EnchantIds.SILENCE_IN_DEPTHS);
+        boolean frenziedCombo = frenzied && hasSetOtherPiece(player, EnchantIds.FRENZIED_BITE);
+        boolean heavenfallCombo = heavenfall && hasSetOtherPiece(player, EnchantIds.SILENCED_HEAVENFALL);
+
+        // 沉默沉入沉渊: 暴击率 = 最大生命×2% (套装联动时×4%)
         double maxHp = player.getAttributeValue(Attributes.MAX_HEALTH);
-        double critChance = silence ? maxHp * 0.02 * (comboCount > 0 ? 2 : 1) : 0;
+        double critChance = silence ? maxHp * 0.02 * (silenceCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_CHANCE.get(), SILENCE_CRIT_CHANCE_MODIFIER,
                 critChance, ADD);
 
-        // 狂热撕咬光芒: 暴击伤害 = 攻速 (组合时×2)
+        // 狂热撕咬光芒: 暴击伤害 = 攻速 (联动时×2)
         double attackSpeed = player.getAttributeValue(Attributes.ATTACK_SPEED);
-        double critDamage1 = frenzied ? attackSpeed * (comboCount > 0 ? 2 : 1) : 0;
+        double critDamage1 = frenzied ? attackSpeed * (frenziedCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_DAMAGE.get(), FRENZIED_CRIT_DAMAGE_MODIFIER,
                 critDamage1, MULT_BASE);
 
-        // 噤声击坠天堂: 暴击伤害+增伤 = 暴击率 (组合时×2) —— 增伤走事件, 暴击伤害走属性
+        // 噤声击坠天堂: 暴击伤害+增伤 = 暴击率 (联动时×2) —— 增伤走事件, 暴击伤害走属性
         double critChanceValue = player.getAttributeValue(ALObjects.Attributes.CRIT_CHANCE.get());
-        double critDamage2 = heavenfall ? critChanceValue * (comboCount > 0 ? 2 : 1) : 0;
+        double critDamage2 = heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_DAMAGE.get(), HEAVENFALL_CRIT_DAMAGE_MODIFIER,
                 critDamage2, MULT_BASE);
         setTransient(player, Attributes.ATTACK_DAMAGE, HEAVENFALL_DAMAGE_MODIFIER,
-                heavenfall ? critChanceValue * (comboCount > 0 ? 2 : 1) : 0, MULT_TOTAL);
+                heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0, MULT_TOTAL);
     }
 
     // ===================================================================
     // 72. 金酒之杯 gold_wine_cup(1.21 源函数: ModEventHandlers#tickGoldWineCup)
+    /** 套装联动判定: 六槽位(护甲四件+正副手)中是否存在除 {@code selfId} 以外的套装附魔。 */
+    private static boolean hasSetOtherPiece(Player player, String selfId) {
+        return EnchantSetPieces.hasOtherPiece(player, selfId,
+                (entity, id, slot) -> EnchantmentLookup1201.INSTANCE.slot(entity, id, slot));
+    }
+
+    // ===================================================================
+    // 91. 自私澄澈天光 selfish_clear_sky(1.21 源函数: ModEventHandlers#tickSelfishClearSky)
+    // 胸甲: 受治疗量 ×(1 + 暴击率×暴击伤害); 六槽位有"其他"套装附魔时另乘增伤。
+    // ===================================================================
+    public static void tickSelfishClearSky(Player player) {
+        boolean hasSelfish = slot(player, EnchantIds.SELFISH_CLEAR_SKY, EquipmentSlot.CHEST) > 0;
+        Attribute healingReceived = ALObjects.Attributes.HEALING_RECEIVED.get();
+        if (!hasSelfish) {
+            removeModifier(player, healingReceived, SELFISH_HEALING_MODIFIER);
+            return;
+        }
+        double critChance = player.getAttributeValue(ALObjects.Attributes.CRIT_CHANCE.get());
+        double critDamage = player.getAttributeValue(ALObjects.Attributes.CRIT_DAMAGE.get());
+        double mult = critChance * critDamage;
+        if (hasSetOtherPiece(player, EnchantIds.SELFISH_CLEAR_SKY)) {
+            double bonus = player.getAttributeValue(ZhonzAttributes1201.BONUS_DAMAGE.get());
+            double dmgMult = player.getAttributeValue(ZhonzAttributes1201.DAMAGE_MULTIPLIER.get());
+            mult *= dmgMult * (1.0 + bonus);
+        }
+        setTransient(player, healingReceived, SELFISH_HEALING_MODIFIER, mult, MULT_BASE);
+    }
+
     // 任何槽位: 背包(含潜影盒)每绿宝石 攻速 ×(1+0.02)。
     // 1.20.1 潜影盒内容走物品 BlockEntityTag/Items NBT(无 1.21 DataComponents CONTAINER)。
     // ===================================================================

@@ -8,6 +8,14 @@ version = '1.3.0'
 
 base { archivesName = "zhonz-more-enchantments-1.20.1-forge" }
 
+// mods.toml 里的 version 用项目版本号替换(与 jar 名/Release tag 保持一致)
+processResources {
+    inputs.property "version", project.version
+    filesMatching("META-INF/mods.toml") {
+        expand "version": project.version
+    }
+}
+
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(17) } // MC 1.20.1 = Java 17
 }

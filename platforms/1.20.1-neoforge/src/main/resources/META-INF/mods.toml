@@ -4,7 +4,7 @@ license="All Rights Reserved"
 
 [[mods]]
 modId="zhonz_more_enchantments"
-version="1.0.0"
+version="${version}"
 displayName="Zhonz's More Enchantments (1.20.1 NeoForge)"
 authors="Zhonz"
 description='''

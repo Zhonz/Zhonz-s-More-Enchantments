@@ -592,6 +592,8 @@ public final class SideEffectsBatch1 {
         if (totemSlot < 0) return false;
 
         ItemStack totem = inv.getItem(totemSlot);
+        // 于此显圣: 消耗前记录该图腾是否带该附魔(消耗后无法再判断)
+        boolean manifestTotem = ManifestHelper1201.hasManifest(totem);
         totem.shrink(1);
 
         event.setCanceled(true);
@@ -605,6 +607,10 @@ public final class SideEffectsBatch1 {
                     SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 1.0f);
             serverLevel.sendParticles(net.minecraft.core.particles.ParticleTypes.TOTEM_OF_UNDYING,
                     player.getX(), player.getY() + 1.0, player.getZ(), 30, 0.0, 0.0, 0.0, 0.1);
+        }
+        // 于此显圣: 免死生效且被消耗的那颗图腾带该附魔 → 触发显圣
+        if (manifestTotem) {
+            ManifestHelper1201.burst(player);
         }
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("[SmartTotem] Consumed totem from inventory slot {} for {}", totemSlot, player.getName().getString());
@@ -642,6 +648,10 @@ public final class SideEffectsBatch1 {
             serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
                     SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 0.8f);
         }
+        // 于此显圣: 免死生效且身上(主手/副手)持有带该附魔的不死图腾 → 触发显圣
+        if (ManifestHelper1201.holdsManifest(entity)) {
+            ManifestHelper1201.burst(entity);
+        }
         return true;
     }
 
@@ -670,6 +680,10 @@ public final class SideEffectsBatch1 {
             if (entity.level() instanceof ServerLevel serverLevel) {
                 serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
                         SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 1.0f);
+            }
+            // 于此显圣: 免死生效且身上(主手/副手)持有带该附魔的不死图腾 → 触发显圣
+            if (ManifestHelper1201.holdsManifest(entity)) {
+                ManifestHelper1201.burst(entity);
             }
             return;
         }

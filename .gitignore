@@ -4,7 +4,7 @@
 .gradle_home/
 build/
 
-# æœ¬åœ°å¤‡ä»½(åˆ‡ UniMined å‰çš„å¿«ç…§, ä¸ä¸Šä¼ )
+# Local backup (pre-UniMined snapshot, not committed)
 _backup_pre_unimined/
 _unimined_probe/
 *.hprof
@@ -29,13 +29,18 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
-# UniMined Æ½Ì¨×Ó¹¤³Ì¹¹½¨²úÎï
+# UniMined platform sub-build outputs
 platforms/*/build/
 platforms/*/.gradle/
 _enchant_map.txt
 
-# DSH session log exports (regenerable, large).sessionlogs/
-# moddev probe scratch
-build/moddev/_probe/
+# Local artifacts and dev/ops tooling (keep out of the repo)
+.sessionlogs/
 dsh-session-*.zip
 graphflow-out/
+build/moddev/_probe/
+tools/github_proxy.js
+tools/dump_session.js
+tools/dump_user_turns.js
+tools/release-v*.ps1
+tools/release-notes-v*.md

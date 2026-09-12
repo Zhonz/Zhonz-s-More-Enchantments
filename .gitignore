@@ -46,3 +46,4 @@ tools/release-v*.ps1
 tools/release-notes-v*.md
 tools/publish-via-api.ps1
 tools/fix-gitignore-via-api.ps1
+tools/publish-v*.ps1

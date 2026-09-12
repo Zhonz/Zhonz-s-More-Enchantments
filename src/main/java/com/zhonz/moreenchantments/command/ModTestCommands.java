@@ -125,6 +125,11 @@ public class ModTestCommands {
                                 .executes(ModTestCommands::testAll)
                         )
 
+                        // === "于此显圣"(manifest) 四条免死路径验证 ===
+                        .then(Commands.literal("manifesttest")
+                                .executes(ModTestCommands::manifestTest)
+                        )
+
                         // === 血路拓成坦途 测试：给主手武器设置指定生物类型的击杀数 ===
                         .then(Commands.literal("bloodpath")
                                 .then(Commands.argument("mobType", StringArgumentType.string())
@@ -688,6 +693,192 @@ public class ModTestCommands {
         context.getSource().sendSuccess(() -> Component.literal(
                 "TestAll finished: tested=" + testedFinal + ", failed=" + failedFinal), true);
         return tested;
+    }
+
+    // ===================================================================
+    // "于此显圣"(manifest) 四条免死路径验证
+    // ===================================================================
+
+    /** 判定阈值: manifest 给自身的是抗性提升 V(amplifier 4); 神护自己只给 II(amplifier 1), 不会误判。 */
+    private static final int MANIFEST_RESISTANCE_AMPLIFIER = 4;
+
+    /** 抗性提升等级(amplifier), 无该效果返回 -1。 */
+    private static int resistanceAmplifier(LivingEntity entity) {
+        MobEffectInstance inst = entity.getEffect(MobEffects.DAMAGE_RESISTANCE);
+        return inst == null ? -1 : inst.getAmplifier();
+    }
+
+    /** 移动缓慢等级(amplifier), 无该效果返回 -1。 */
+    private static int slowdownAmplifier(LivingEntity entity) {
+        MobEffectInstance inst = entity.getEffect(MobEffects.MOVEMENT_SLOWDOWN);
+        return inst == null ? -1 : inst.getAmplifier();
+    }
+
+    /**
+     * 把测试僵尸重置成"干净受害者": 清空装备/背包/效果/持久数据。
+     * 注意: FakePlayer 不会被 hurt() 伤害(hurt 直接返回 false), 无法走死亡管线,
+     * 所以免死路径的验证一律用真实生物(僵尸)。
+     */
+    private static void resetVictim(LivingEntity victim) {
+        for (EquipmentSlot s : EquipmentSlot.values()) {
+            victim.setItemSlot(s, ItemStack.EMPTY);
+        }
+        victim.removeAllEffects();
+        victim.invulnerableTime = 0;
+        victim.hurtTime = 0;
+        victim.setRemainingFireTicks(0);
+        victim.setAbsorptionAmount(0.0f);
+        victim.setHealth(victim.getMaxHealth());
+        com.zhonz.moreenchantments.common.storage.EntityDataStorage.removeData(victim);
+        net.minecraft.nbt.CompoundTag data = victim.getPersistentData();
+        for (String key : new java.util.ArrayList<>(data.getAllKeys())) {
+            if (key.startsWith("zhonz_")) data.remove(key);
+        }
+    }
+
+    /** 带指定附魔的物品(自动选择合适载体)。 */
+    private static ItemStack withEnchant(String enchantPath, Holder<Enchantment> holder) {
+        ItemStack stack = new ItemStack(getTestWeapon(enchantPath));
+        if (holder != null) stack.enchant(holder, 1);
+        return stack;
+    }
+
+    /** 在指定位置生成一只静止的观察用僵尸(作为"周围生物"被显圣定身)。 */
+    private static LivingEntity spawnWitness(ServerLevel level, double x, double y, double z) {
+        LivingEntity witness = EntityType.ZOMBIE.create(level);
+        if (witness == null) return null;
+        witness.moveTo(x, y, z, 0.0f, 0.0f);
+        witness.setInvulnerable(true);
+        if (witness instanceof net.minecraft.world.entity.Mob mob) {
+            mob.setNoAi(true);
+            mob.setPersistenceRequired();
+        }
+        level.addFreshEntity(witness);
+        return witness;
+    }
+
+    /**
+     * 验证「于此显圣」的四条免死路径都能触发(用真实僵尸走完整死亡管线):
+     * <ol>
+     *   <li>{@code vanilla} —— 主手不死图腾(走原版 checkTotemDeathProtection, 由 ManifestTotemMixin 钩住)</li>
+     *   <li>{@code smart_totem} —— 智能图腾(胸甲附魔 + 背包内的该附魔图腾被消耗)</li>
+     *   <li>{@code return_from_hell} —— 靴子附魔, 主手/副手持该附魔图腾</li>
+     *   <li>{@code divine_protection} —— 盔甲附魔, 主手/副手持该附魔图腾</li>
+     * </ol>
+     * 另含两项反例, 证明"必须带「于此显圣」": {@code negative_plain_totem}(普通图腾不触发)、
+     * {@code negative_no_totem}(无图腾被杀, 确认击杀本身有效)。
+     * 断言: 免死路径 = 存活 + 自身抗性提升 V(amplifier 4) + 旁 2 格僵尸定身(移动缓慢 XI);
+     * 反例 = 预期结果(普通图腾存活但无显圣 / 无图腾直接死亡)。
+     */
+    private static int manifestTest(CommandContext<CommandSourceStack> context) {
+        ServerLevel level = context.getSource().getLevel();
+        // 固定高台: 远离出生点堆积的实体, 保证普通僵尸(未被 setInvulnerable)确实是"干净"的受害者
+        double x = 0.5, y = 200.0, z = 0.5;
+
+        Holder<Enchantment> manifestHolder = ModEnchantments.getHolderOrNull(
+                ResourceKey.create(net.minecraft.core.registries.Registries.ENCHANTMENT,
+                        ResourceLocation.fromNamespaceAndPath(
+                                com.zhonz.moreenchantments.common.CommonConstants.MODID, "manifest")));
+        if (manifestHolder == null) {
+            context.getSource().sendFailure(Component.literal("[ManifestTest] manifest 附魔未找到"));
+            return 0;
+        }
+        // 「于此显圣」附在不死图腾上(1.21 附魔是数据组件, 图腾可以带)
+        java.util.function.Supplier<ItemStack> manifestTotem = () -> {
+            ItemStack t = new ItemStack(Items.TOTEM_OF_UNDYING);
+            t.enchant(manifestHolder, 1);
+            return t;
+        };
+
+        String[] paths = {"vanilla", "return_from_hell", "divine_protection",
+                          "negative_plain_totem", "negative_no_totem"};
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        lines.add("SKIP smart_totem: 智能图腾分支仅对 Player 生效(僵尸无背包), 需真实玩家验证");
+        int passed = 0;
+
+        for (String path : paths) {
+            // 观察用僵尸(被显圣定身的那只), 免死路径需要它作为"周围生物"
+            LivingEntity witness = spawnWitness(level, x + 2.0, y, z);
+            if (witness == null) {
+                lines.add(path + ": SKIP (僵尸创建失败)");
+                continue;
+            }
+
+            // 受害者: 另一只僵尸(真实生物才走死亡管线)
+            LivingEntity victim = EntityType.ZOMBIE.create(level);
+            if (victim == null) {
+                witness.discard();
+                lines.add(path + ": SKIP (受害者创建失败)");
+                continue;
+            }
+            victim.moveTo(x, y, z, 0.0f, 0.0f);
+            if (victim instanceof net.minecraft.world.entity.Mob mob) {
+                mob.setNoAi(true);
+                mob.setPersistenceRequired();
+            }
+            level.addFreshEntity(victim);
+            resetVictim(victim);
+
+            switch (path) {
+                // 原版路径: 主手不死图腾 -> checkTotemDeathProtection -> mixin 钩 RETURN 触发显圣
+                case "vanilla" -> victim.setItemSlot(EquipmentSlot.MAINHAND, manifestTotem.get());
+                // 智能图腾路径: 胸甲附魔 + 背包内的该附魔图腾(手上不放, 否则先走原版路径)。
+                // 该分支要求 Player(僵尸没有背包), 因此不在本命令覆盖范围内, 见顶部 SKIP 说明。
+                // 自地狱中归来: 靴子附魔, 副手持该附魔图腾(主手必须空, 否则被原版图腾路径先接管)
+                case "return_from_hell" -> {
+                    victim.setItemSlot(EquipmentSlot.FEET,
+                            withEnchant("return_from_hell", ModEnchantments.getHolder(ModEnchantments.RETURN_FROM_HELL)));
+                    victim.setItemSlot(EquipmentSlot.OFFHAND, manifestTotem.get());
+                }
+                // 神护: 头盔附魔, 副手持该附魔图腾
+                case "divine_protection" -> {
+                    victim.setItemSlot(EquipmentSlot.HEAD,
+                            withEnchant("divine_protection", ModEnchantments.getHolder(ModEnchantments.DIVINE_PROTECTION)));
+                    victim.setItemSlot(EquipmentSlot.OFFHAND, manifestTotem.get());
+                }
+                // 反例 1: 普通图腾(不带「于此显圣」) -> 应该免死, 但不该有显圣
+                case "negative_plain_totem" -> victim.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(Items.TOTEM_OF_UNDYING));
+                // 反例 2: 什么都不带 -> 应该直接死亡(证明"致死"这件事本身有效, 前面的存活不是假象)
+                case "negative_no_totem" -> { }
+                default -> { }
+            }
+
+            // 致死伤害: 必须用普通伤害源。注意不能用 kill() —— 它内部用 damageSources().genericKill(),
+            // 该伤害带 BYPASSES_INVULNERABILITY 标签, 而 checkTotemDeathProtection 对这类伤害直接
+            // 返回 false(原版语义: 图腾挡不住 /kill), 会让图腾路径出现假失败。
+            victim.hurt(level.damageSources().generic(), 1000.0f);
+
+            boolean alive = victim.isAlive();
+            boolean selfBuff = resistanceAmplifier(victim) == MANIFEST_RESISTANCE_AMPLIFIER;
+            boolean witnessStunned = slowdownAmplifier(witness) >= 10;
+
+            boolean ok;
+            String expect;
+            if (path.startsWith("negative_")) {
+                ok = path.equals("negative_plain_totem")
+                        ? (alive && !selfBuff && !witnessStunned)   // 免死但不显圣
+                        : (!alive);                                  // 无免死 -> 死亡
+                expect = path.equals("negative_plain_totem") ? "免死但无显圣" : "直接死亡";
+            } else {
+                ok = alive && selfBuff && witnessStunned;
+                expect = "免死+显圣(抗性V/定身)";
+            }
+            if (ok) passed++;
+
+            String detail = String.format("存活=%b 自身抗性V=%b(%d) 旁观定身=%b(%d)",
+                    alive, selfBuff, resistanceAmplifier(victim), witnessStunned, slowdownAmplifier(witness));
+            lines.add((ok ? "PASS " : "FAIL ") + path + ": " + detail + " [期望: " + expect + "]");
+            LOGGER.info("[ManifestTest] {} => {} (期望 {})", path, detail, expect);
+
+            victim.discard();
+            witness.discard();
+        }
+
+        final int passedFinal = passed;
+        final String report = "ManifestTest: cases=" + paths.length + " passed=" + passedFinal
+                + "\n  " + String.join("\n  ", lines);
+        context.getSource().sendSuccess(() -> Component.literal(report), true);
+        return passedFinal;
     }
 
     private static net.minecraft.nbt.CompoundTag getFakeData(FakePlayer fakePlayer) {

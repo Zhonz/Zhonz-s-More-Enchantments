@@ -3,6 +3,7 @@ package com.zhonz.moreenchantments.event;
 import com.zhonz.moreenchantments.command.ModTestCommands;
 import com.zhonz.moreenchantments.common.storage.EntityDataStorage;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
+import com.zhonz.moreenchantments.util.ManifestHelper;
 import dev.shadowsoffire.apothic_attributes.api.ALObjects;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
@@ -1914,6 +1915,8 @@ public class ModEventHandlers {
 
         // 消耗一个不死图腾
         ItemStack totem = inv.getItem(totemSlot);
+        // 于此显圣: 消耗前记录该图腾是否带该附魔(消耗后无法再判断)
+        boolean manifestTotem = ManifestHelper.hasManifest(totem);
         totem.shrink(1);
 
         // 触发不死图腾效果（与原版行为一致）
@@ -1936,6 +1939,10 @@ public class ModEventHandlers {
                                     0.0f, 0.0f, 0.0f, 0.1f, 30));
                 }
             }
+        }
+        // 于此显圣: 免死生效且被消耗的那颗图腾带该附魔 → 触发显圣
+        if (manifestTotem) {
+            ManifestHelper.burst(player);
         }
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("[SmartTotem] Consumed totem from inventory slot {} for {}", totemSlot, player.getName().getString());
@@ -1984,6 +1991,10 @@ public class ModEventHandlers {
             serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
                     SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 0.8f);
         }
+        // 于此显圣: 免死生效且身上(主手/副手)持有带该附魔的不死图腾 → 触发显圣
+        if (ManifestHelper.holdsManifest(entity)) {
+            ManifestHelper.burst(entity);
+        }
         return true;
     }
 
@@ -2004,6 +2015,10 @@ public class ModEventHandlers {
             if (entity.level() instanceof ServerLevel serverLevel) {
                 serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
                         SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 1.0f);
+            }
+            // 于此显圣: 免死生效且身上(主手/副手)持有带该附魔的不死图腾 → 触发显圣
+            if (ManifestHelper.holdsManifest(entity)) {
+                ManifestHelper.burst(entity);
             }
             return;
         }

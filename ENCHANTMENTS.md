@@ -355,7 +355,14 @@
 ### 55. "于此显圣" — `manifest` ✅
 - **可附魔**:不死图腾
 - **效果**:该图腾被触发消耗时,使周围全部生物获得三秒无法移动,自身获得 30 秒抗性提升 V
-- **实现**:`ManifestTotemMixin`(钩 `checkTotemDeathProtection`)
+- **实现**:`util/ManifestHelper`(共享触发逻辑) + `ManifestTotemMixin`(原版路径钩 `checkTotemDeathProtection` RETURN)
+- **触发路径(4 条免死全覆盖)**:
+  1. 原版图腾被消耗(主手/副手)—— `ManifestTotemMixin`
+  2. 智能图腾(从背包消耗带该附魔的图腾)—— `ModEventHandlers.trySmartTotem`
+  3. 自地狱中归来(免死)—— 判定主手/副手是否持有带该附魔的图腾
+  4. 神护(免死)—— 同上
+- **验证**:`/zhonztest manifesttest` 5/5(原版图腾/自地狱中归来/神护三条路径实测通过;普通图腾与无图腾两项反例正确不触发)
+- **边界**:智能图腾分支仅对 `Player` 生效(僵尸无背包), 该条为结构接线, 运行时需真实玩家
 
 ### 56. 惨白的午夜 — `pale_midnight` ✅
 - **可附魔**:头盔

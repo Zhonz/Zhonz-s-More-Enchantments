@@ -2,6 +2,22 @@
 
 > 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
 
+## 最新状态(2026-09-12 晚,本轮收尾)
+- ✅ **「于此显圣」扩展到 4 条免死路径**(上个会话做到一半被框架崩溃打断,本轮完成)
+  - 新增 `util/ManifestHelper`(共享: `hasManifest(ItemStack)` / `holdsManifest(LivingEntity)` / `burst(LivingEntity)`);
+    三平台各有一套(`platforms/*/**/ManifestHelper1201.java`)
+  - `ManifestTotemMixin` 改为复用 helper(主工程 + 1.20.1 双平台);`ModEventHandlers` 三个免死路径
+    (`trySmartTotem` / `tryReturnFromHell` / `tryDivineProtection`)各加一处 `burst` 调用
+  - 新增验证命令 **`/zhonztest manifesttest`**:真实僵尸走完整死亡管线,断言"存活 + 自身抗性提升 V(amp 4) +
+    旁 2 格僵尸定身(移动缓慢 XI)",另含两项反例(普通图腾 / 无图腾)
+  - 结果: **5/5 通过**(原版图腾 / 自地狱中归来 / 神护 三条路径实测;智能图腾分支仅对 Player 生效,僵尸无背包 → SKIP,
+    属结构接线,运行时需真实玩家)+ **testall 63/63** ✅,三平台 compile ✅
+- ⚠️ **测试陷阱(重要)**:`LivingEntity.kill()` 内部用 `damageSources().genericKill()`,该伤害带
+  `BYPASSES_INVULNERABILITY` 标签,而 `checkTotemDeathProtection` 对该标签的伤害**直接返回 false**
+  (原版语义:图腾挡不住 /kill)。用 kill() 测图腾类免死会得到假失败 —— 必须用
+  `victim.hurt(level.damageSources().generic(), 大数值)`。
+  另: **FakePlayer 完全不吃伤害**(hurt(5)→ 0 伤害且返回 false),无法用于死亡管线测试,一律用真实生物。
+
 ## 项目
 - NeoForge 1.21.1 附魔 Mod,工作区 `D:\WXH\workspace\mcmodmaker\ZhonzsMoreEnchantments`(Windows, gradlew.bat, `GRADLE_USER_HOME` 用工作区内 `.gradle_home`)
 - 前置:Apothic Attributes 1.21.1-2.10.1 + Placebo(必需,`build.gradle` 已排除 Curios)
@@ -50,6 +66,8 @@
 ## 测试栈
 - runServer(专属服务器,`run/` world"新的世界",offline;RCON 25575,密码 zhonz_test_rcon)
 - 日志 `run/logs/debug.log`(DEBUG 配置)/`latest.log`
+- 测试命令: `/zhonztest testall`(63 项攻击侧回归)、`/zhonztest manifesttest`(5 项免死/显圣路径)、
+  `giveweapon`(按附魔选载体, 三千万转=下界星、慈悲=附魔书、铸成=盾牌)、`equiparmor`、`attack`、`damage`、`info`
 - MaaMCP 曾用于客户端控制,当前未连;窗口"Minecraft NeoForge* 1.21.1"
 
 ## 阶段二收尾(round16, 已完成)

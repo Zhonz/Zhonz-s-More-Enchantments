@@ -33,3 +33,9 @@ Desktop.ini
 platforms/*/build/
 platforms/*/.gradle/
 _enchant_map.txt
+
+# DSH session log exports (regenerable, large).sessionlogs/
+# moddev probe scratch
+build/moddev/_probe/
+dsh-session-*.zip
+graphflow-out/

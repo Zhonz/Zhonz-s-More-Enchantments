@@ -1,13 +1,13 @@
-# release-v1.3.0.ps1 — 推送 1.3.0 版本提交并发布 GitHub Release v1.3.0(含三平台 jar)
-# 用法: pwsh -File tools/release-v1.3.0.ps1
-# 说明: 本机沙箱会阻断 schannel/openssl 的 TLS 凭据获取, 因此本脚本需在更宽权限下运行。
+# release-v1.3.0.ps1 - push commits and publish GitHub Release v1.3.0 with the three platform jars.
+# NOTE: keep this file ASCII-only - Windows PowerShell 5.1 reads .ps1 as ANSI, non-ASCII breaks parsing.
+# Wider access is needed: the sandbox blocks git/curl TLS to GitHub (schannel SEC_E_NO_CREDENTIALS).
 $ErrorActionPreference = "Stop"
 $repo = "Zhonz/Zhonz-s-More-Enchantments"
-$tag = "v1.3.0"
+$tag  = "v1.3.0"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# --- 1. 从 Windows 凭据管理器读取 git 令牌(OAuth, 不入库/不打印) ---
+# --- 1. read the git OAuth token from Windows Credential Manager (never printed in full) ---
 $src = @"
 using System;
 using System.Runtime.InteropServices;
@@ -30,57 +30,67 @@ public class CredRel {
 "@
 Add-Type -TypeDefinition $src
 $tok = [CredRel]::Get("git:https://github.com")
-if (-not $tok) { throw "未从凭据管理器取到 git:https://github.com 的令牌" }
-Write-Output "[1/5] 令牌已读取(len=$($tok.Length), prefix=$($tok.Substring(0,4)))"
+if (-not $tok) { throw "no token found at git:https://github.com in Credential Manager" }
+Write-Output ("[1/5] token loaded (len={0}, prefix={1})" -f $tok.Length, $tok.Substring(0, 4))
 
-# --- 2. 推送本地提交 ---
+# --- 2. push local commits ---
 $env:GIT_TERMINAL_PROMPT = "0"
 $url = "https://Zhonz:$tok@github.com/$repo.git"
-git -c credential.helper= push $url main 2>&1 | ForEach-Object { $_ }
-Write-Output "[2/5] 已推送 main"
+# git writes progress to stderr, which PowerShell would otherwise turn into a terminating error
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$pushOut = git -c credential.helper= push $url main 2>&1
+$pushCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+$pushOut | ForEach-Object { Write-Output ("  git: " + $_) }
+if ($pushCode -ne 0) { throw "git push failed with exit $pushCode" }
+Write-Output "[2/5] main pushed"
 
-# --- 3. 校验三个平台产物 ---
+# --- 3. verify the three artifacts exist ---
 $jars = @(
   "build/libs/zhonz_more_enchantments-1.3.0.jar",
   "platforms/1.20.1-forge/build/libs/zhonz-more-enchantments-1.20.1-forge-1.3.0.jar",
   "platforms/1.20.1-neoforge/build/libs/zhonz-more-enchantments-1.20.1-neoforge-1.3.0.jar"
 )
 foreach ($j in $jars) {
-  if (-not (Test-Path $j)) { throw "缺少产物: $j" }
-  $len = (Get-Item $j).Length
-  Write-Output ("[3/5] {0} ({1:N1} KB)" -f (Split-Path $j -Leaf), ($len / 1KB))
+  if (-not (Test-Path $j)) { throw "missing artifact: $j" }
+  Write-Output ("[3/5] {0} ({1:N1} KB)" -f (Split-Path $j -Leaf), ((Get-Item $j).Length / 1KB))
 }
 
-# --- 4. 创建 Release(已存在则复用) ---
-$headers = @{ Authorization = "Bearer $tok"; "User-Agent" = "dsh-agent"; Accept = "application/vnd.github+json" }
+# --- 4. create the release (reuse it when the tag already exists) ---
 $notesPath = Join-Path $root "tools/release-notes-v1.3.0.md"
-if (-not (Test-Path $notesPath)) { throw "缺少 release 说明: $notesPath" }
+if (-not (Test-Path $notesPath)) { throw "missing release notes: $notesPath" }
 $body = [System.IO.File]::ReadAllText($notesPath, (New-Object System.Text.UTF8Encoding($false)))
-$payload = @{ tag_name = $tag; target_commitish = "main"; name = "v1.3.0"; body = $body; draft = $false; prerelease = $false } | ConvertTo-Json -Depth 4
+# build the payload by hand so the UTF-8 markdown survives without BOM/encoding damage
+$esc = $body.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`n", '\n')
+$payload = '{"tag_name":"' + $tag + '","target_commitish":"main","name":"' + $tag + '","body":"' + $esc + '","draft":false,"prerelease":false}'
 $payloadPath = Join-Path $env:TEMP "rel-payload.json"
 [System.IO.File]::WriteAllText($payloadPath, $payload, (New-Object System.Text.UTF8Encoding($false)))
 
-$existing = curl.exe -s -H "Authorization: Bearer $tok" -H "User-Agent: dsh-agent" "https://api.github.com/repos/$repo/releases/tags/$tag"
+$apiHeaders = @("-H", "Authorization: Bearer $tok", "-H", "User-Agent: dsh-agent", "-H", "Accept: application/vnd.github+json")
+$existing = curl.exe -s @apiHeaders "https://api.github.com/repos/$repo/releases/tags/$tag"
 $relId = $null
 try { $relId = ($existing | ConvertFrom-Json).id } catch { }
 if ($relId) {
-  Write-Output "[4/5] Release $tag 已存在(id=$relId), 复用"
+  Write-Output "[4/5] release $tag exists (id=$relId), reusing"
 } else {
-  $created = curl.exe -s -X POST -H "Authorization: Bearer $tok" -H "User-Agent: dsh-agent" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" --data-binary "@$payloadPath" "https://api.github.com/repos/$repo/releases"
-  $relId = ($created | ConvertFrom-Json).id
-  if (-not $relId) { throw "创建 Release 失败: $created" }
-  Write-Output "[4/5] Release $tag 已创建(id=$relId)"
+  $created = curl.exe -s -X POST @apiHeaders -H "Content-Type: application/json" --data-binary "@$payloadPath" "https://api.github.com/repos/$repo/releases"
+  try { $relId = ($created | ConvertFrom-Json).id } catch { }
+  if (-not $relId) { throw "release creation failed: $created" }
+  Write-Output "[4/5] release $tag created (id=$relId)"
 }
 
-# --- 5. 上传三个产物 ---
+# --- 5. upload the three jars ---
 foreach ($j in $jars) {
   $name = Split-Path $j -Leaf
-  $up = curl.exe -s -X POST -H "Authorization: Bearer $tok" -H "User-Agent: dsh-agent" -H "Content-Type: application/java-archive" --data-binary "@$j" "https://uploads.github.com/repos/$repo/releases/$relId/assets?name=$name"
-  $state = ($up | ConvertFrom-Json).state
-  Write-Output "[5/5] 上传 $name -> state=$state"
+  $up = curl.exe -s -X POST @apiHeaders -H "Content-Type: application/java-archive" --data-binary "@$j" "https://uploads.github.com/repos/$repo/releases/$relId/assets?name=$name"
+  $state = "?"
+  try { $state = ($up | ConvertFrom-Json).state } catch { $state = "parse-error: $up" }
+  Write-Output ("[5/5] upload {0} -> state={1}" -f $name, $state)
 }
 
-# --- 汇总 ---
-$final = curl.exe -s -H "Authorization: Bearer $tok" -H "User-Agent: dsh-agent" "https://api.github.com/repos/$repo/releases/tags/$tag" | ConvertFrom-Json
+# --- summary ---
+$final = curl.exe -s @apiHeaders "https://api.github.com/repos/$repo/releases/tags/$tag" | ConvertFrom-Json
 Write-Output "RELEASE_URL=$($final.html_url)"
-Write-Output "ASSETS=$((($final.assets | ForEach-Object { "$($_.name):$($_.size)" }) -join ', '))"
+Write-Output "RELEASE_NAME=$($final.name)"
+foreach ($a in $final.assets) { Write-Output ("ASSET {0} {1} bytes downloads={2}" -f $a.name, $a.size, $a.download_count) }

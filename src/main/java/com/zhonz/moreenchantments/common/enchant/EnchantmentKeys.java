@@ -109,4 +109,6 @@ public class EnchantmentKeys {
     public static final ResourceKey<Enchantment> THIRTY_MILLION_TURNS = key("thirty_million_turns");
     public static final ResourceKey<Enchantment> HEAVEN_CHAIN = key("heaven_chain");
     public static final ResourceKey<Enchantment> MERCY_EQUAL = key("mercy_equal");
+    public static final ResourceKey<Enchantment> FERVENT_SINCERE_HOPE = key("fervent_sincere_hope");
+    public static final ResourceKey<Enchantment> SELFISH_CLEAR_SKY = key("selfish_clear_sky");
 }

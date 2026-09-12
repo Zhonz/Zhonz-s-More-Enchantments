@@ -100,6 +100,10 @@ public final class EnchantIds {
     public static final String THIRTY_MILLION_TURNS = "thirty_million_turns";
     public static final String HEAVEN_CHAIN = "heaven_chain";
     public static final String MERCY_EQUAL = "mercy_equal";
+    /** 暴击五件套之"热烈": 溢出治疗转临时生命。 */
+    public static final String FERVENT_SINCERE_HOPE = "fervent_sincere_hope";
+    /** 暴击五件套之"自私": 受治疗吃暴击/暴伤(套装时另吃增伤)。 */
+    public static final String SELFISH_CLEAR_SKY = "selfish_clear_sky";
 
     private EnchantIds() {
     }

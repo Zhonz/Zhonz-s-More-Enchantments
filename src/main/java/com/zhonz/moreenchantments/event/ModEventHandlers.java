@@ -1,6 +1,8 @@
 package com.zhonz.moreenchantments.event;
 
 import com.zhonz.moreenchantments.command.ModTestCommands;
+import com.zhonz.moreenchantments.common.damage.EnchantSetPieces;
+import com.zhonz.moreenchantments.common.enchant.EnchantIds;
 import com.zhonz.moreenchantments.common.storage.EntityDataStorage;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
 import com.zhonz.moreenchantments.util.ManifestHelper;
@@ -47,6 +49,7 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+import net.neoforged.neoforge.event.entity.living.LivingHealEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingShieldBlockEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
@@ -185,6 +188,10 @@ public class ModEventHandlers {
     private static final ResourceLocation FRENZIED_CRIT_DAMAGE_MODIFIER = rl("frenzied_bite_crit_damage");
     private static final ResourceLocation HEAVENFALL_CRIT_DAMAGE_MODIFIER = rl("heavenfall_crit_damage");
     private static final ResourceLocation HEAVENFALL_DAMAGE_MODIFIER = rl("heavenfall_damage");
+    /** 91. 自私澄澈天光: 受治疗量经 HEALING_RECEIVED 吃到暴击/暴伤(套装时另加增伤)。 */
+    private static final ResourceLocation SELFISH_HEALING_MODIFIER = rl("selfish_clear_sky_healing");
+    /** 90. 热烈诚挚希望: 临时生命(黄心)时长——30 秒。 */
+    private static final int FERVENT_ABSORPTION_TICKS = 600;
     private static final ResourceLocation PRIMAL_ATTACK_SPEED_MODIFIER = rl("primal_attack_speed");
     private static final ResourceLocation PRIMAL_MOVE_MODIFIER = rl("primal_move");
     private static final ResourceLocation PRIMAL_MINING_MODIFIER = rl("primal_mining");
@@ -1568,33 +1575,129 @@ public class ModEventHandlers {
         setTransient(player, ALObjects.Attributes.DRAW_SPEED, PERFUNCTORY_DRAW_MODIFIER, mult, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
     }
 
-    // --- 65-67. 暴击三件套: 沉默沉入沉渊/狂热撕咬光芒/噤声击坠天堂 ---
+    // --- 65-67. 暴击五件套: 沉默沉入沉渊/狂热撕咬光芒/噤声击坠天堂(+热烈/自私在下方各自 tick) ---
+
+    /**
+     * 套装联动判定: 六槽位(护甲四件+正副手)中是否存在<b>除 {@code selfId} 以外</b>的套装附魔。
+     * 口径见 {@link EnchantSetPieces}(用户确认: 任意"其他"一件即可, 不要求齐全)。
+     */
+    private static boolean hasSetOtherPiece(LivingEntity entity, String selfId) {
+        return EnchantSetPieces.hasOtherPiece(entity, selfId, ModEventHandlers::platformSetLevel);
+    }
+
+    /** 平台层: 某槽位上指定附魔 id 的等级(1.21 经 Holder 解析)。 */
+    private static int platformSetLevel(LivingEntity entity, String enchantId, EquipmentSlot slot) {
+        ItemStack stack = entity.getItemBySlot(slot);
+        if (stack.isEmpty()) return 0;
+        ResourceKey<Enchantment> key = switch (enchantId) {
+            case EnchantIds.SILENCE_IN_DEPTHS -> ModEnchantments.SILENCE_IN_DEPTHS;
+            case EnchantIds.FRENZIED_BITE -> ModEnchantments.FRENZIED_BITE;
+            case EnchantIds.SILENCED_HEAVENFALL -> ModEnchantments.SILENCED_HEAVENFALL;
+            case EnchantIds.FERVENT_SINCERE_HOPE -> ModEnchantments.FERVENT_SINCERE_HOPE;
+            case EnchantIds.SELFISH_CLEAR_SKY -> ModEnchantments.SELFISH_CLEAR_SKY;
+            default -> null;
+        };
+        if (key == null) return 0;
+        Holder<Enchantment> holder = ModEnchantments.getHolderOrNull(key);
+        return holder == null ? 0 : stack.getEnchantmentLevel(holder);
+    }
+
     private static void tickCritWeapons(Player player, CompoundTag data) {
         ItemStack weapon = player.getMainHandItem();
         boolean silence = weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.SILENCE_IN_DEPTHS)) > 0;
         boolean frenzied = weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.FRENZIED_BITE)) > 0;
         boolean heavenfall = weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.SILENCED_HEAVENFALL)) > 0;
-        int comboCount = (frenzied ? 1 : 0) + (heavenfall ? 1 : 0);
 
-        // 沉默沉入沉渊: 暴击率 = 最大生命×2% (有组合时×4%)
+        // 套装联动: 各附魔各自判定"除自己以外的其他套装附魔是否在身"(六槽位)
+        boolean silenceCombo = silence && hasSetOtherPiece(player, EnchantIds.SILENCE_IN_DEPTHS);
+        boolean frenziedCombo = frenzied && hasSetOtherPiece(player, EnchantIds.FRENZIED_BITE);
+        boolean heavenfallCombo = heavenfall && hasSetOtherPiece(player, EnchantIds.SILENCED_HEAVENFALL);
+
+        // 沉默沉入沉渊: 暴击率 = 最大生命×2% (套装联动时×4%)
         double maxHp = player.getAttributeValue(Attributes.MAX_HEALTH);
-        double critChance = silence ? maxHp * 0.02 * (comboCount > 0 ? 2 : 1) : 0;
+        double critChance = silence ? maxHp * 0.02 * (silenceCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_CHANCE, SILENCE_CRIT_CHANCE_MODIFIER,
                 critChance, AttributeModifier.Operation.ADD_VALUE);
 
-        // 狂热撕咬光芒: 暴击伤害 = 攻速 (组合时×2)
+        // 狂热撕咬光芒: 暴击伤害 = 攻速 (联动时×2)
         double attackSpeed = player.getAttributeValue(Attributes.ATTACK_SPEED);
-        double critDamage1 = frenzied ? attackSpeed * (comboCount > 0 ? 2 : 1) : 0;
+        double critDamage1 = frenzied ? attackSpeed * (frenziedCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_DAMAGE, FRENZIED_CRIT_DAMAGE_MODIFIER,
                 critDamage1, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
 
-        // 噤声击坠天堂: 暴击伤害+增伤 = 暴击率 (组合时×2) —— 增伤走事件, 暴击伤害走属性
+        // 噤声击坠天堂: 暴击伤害+增伤 = 暴击率 (联动时×2) —— 增伤走事件, 暴击伤害走属性
         double critChanceValue = player.getAttributeValue(ALObjects.Attributes.CRIT_CHANCE);
-        double critDamage2 = heavenfall ? critChanceValue * (comboCount > 0 ? 2 : 1) : 0;
+        double critDamage2 = heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_DAMAGE, HEAVENFALL_CRIT_DAMAGE_MODIFIER,
                 critDamage2, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
         setTransient(player, Attributes.ATTACK_DAMAGE, HEAVENFALL_DAMAGE_MODIFIER,
-                heavenfall ? critChanceValue * (comboCount > 0 ? 2 : 1) : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+                heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+    }
+
+    // --- 91. 自私澄澈天光: 受治疗量在最终生效时吃暴击率×暴击伤害(套装时另吃增伤) ---
+    private static void tickSelfishClearSky(Player player) {
+        boolean hasSelfish = getSlotEnchantmentLevel(player, ModEnchantments.SELFISH_CLEAR_SKY, EquipmentSlot.CHEST) > 0;
+        if (!hasSelfish) {
+            removeModifier(player, ALObjects.Attributes.HEALING_RECEIVED, SELFISH_HEALING_MODIFIER);
+            return;
+        }
+        // 暴击收益: 受治疗量 ×(1 + 暴击率 × 暴击伤害)
+        double critChance = player.getAttributeValue(ALObjects.Attributes.CRIT_CHANCE);
+        double critDamage = player.getAttributeValue(ALObjects.Attributes.CRIT_DAMAGE);
+        double mult = critChance * critDamage;
+        // 套装联动: 同时吃到增伤(统一增伤通道的 damage_multiplier × (1+bonus_damage))
+        if (hasSetOtherPiece(player, EnchantIds.SELFISH_CLEAR_SKY)) {
+            double bonus = player.getAttributeValue(com.zhonz.moreenchantments.attribute.ZhonzAttributes.BONUS_DAMAGE);
+            double dmgMult = player.getAttributeValue(com.zhonz.moreenchantments.attribute.ZhonzAttributes.DAMAGE_MULTIPLIER);
+            mult *= dmgMult * (1.0 + bonus);
+        }
+        setTransient(player, ALObjects.Attributes.HEALING_RECEIVED, SELFISH_HEALING_MODIFIER,
+                mult, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
+    }
+
+    // --- 90. 热烈诚挚希望: 溢出治疗转临时生命(黄心) ---
+    /**
+     * 溢出治疗 → 临时生命。口径: 治疗量超过"缺失生命"的部分转为吸收值(黄心)。
+     * 上限为最大生命值的 100%; 六槽位存在其他套装附魔时取消上限。
+     *
+     * <p>实现要点: 吸收值必须由「伤害吸收」效果承载 —— 原版 {@code LivingEntity.tick}
+     * 在没有该效果时会把吸收值重置为 0(原版不死图腾同样给自己挂 ABSORPTION)。
+     * 效果等级按当前吸收量换算(每级 4 点), 时长 30 秒即"每次获得刷新持续时间"。
+     */
+    @SubscribeEvent
+    public static void onFerventOverheal(LivingHealEvent event) {
+        LivingEntity entity = event.getEntity();
+        if (entity.level().isClientSide()) return;
+        if (getSlotEnchantmentLevel(entity, ModEnchantments.FERVENT_SINCERE_HOPE, EquipmentSlot.CHEST) <= 0) return;
+
+        float amount = event.getAmount();
+        if (amount <= 0) return;
+        float missing = entity.getMaxHealth() - entity.getHealth();
+        float overflow = amount - missing;
+        if (overflow <= 0) return;
+
+        boolean setBonus = hasSetOtherPiece(entity, EnchantIds.FERVENT_SINCERE_HOPE);
+        double cap = setBonus ? Double.MAX_VALUE : entity.getMaxHealth();
+        double absorp = entity.getAbsorptionAmount();
+        double room = cap - absorp;
+        if (room > 0) {
+            double gained = Math.min(overflow, room);
+            double target = absorp + gained;
+            // 每级提供 4 点吸收, 向上取整保证 >= target
+            int amplifier = Math.max(0, (int) Math.ceil(target / 4.0) - 1);
+            entity.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, FERVENT_ABSORPTION_TICKS,
+                    amplifier, false, false, false));
+            entity.setAbsorptionAmount((float) target);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("[FerventHope] overflow={} -> absorption={} (amplifier={}, capRemoved={})",
+                        overflow, target, amplifier, setBonus);
+            }
+        }
+
+        // 只有"缺失生命"那部分真正治疗; 溢出部分已转临时生命
+        float heal = Math.min(amount, missing);
+        event.setAmount(heal > 0 ? heal : 0.0f);
+        if (heal <= 0) event.setCanceled(true);
     }
 
     // --- 68. "?!合合!?": 挖掘工具, 主手自动合成背包矿物块 ---
@@ -1787,6 +1890,8 @@ public class ModEventHandlers {
         tickSorrowfulRedBonus(player);
         tickNewSunBonus(player);
         tickRapidAscentBonus(player);
+        // 90/91: 受治疗侧(自私澄澈天光的治疗暴击加成)
+        tickSelfishClearSky(player);
         refreshDamageMultiplierAggregate(player);
     }
 
@@ -2091,6 +2196,7 @@ public class ModEventHandlers {
         tickEtiquette(player, data);
         tickPerfunctory(player, data);
         tickCritWeapons(player, data);
+        tickSelfishClearSky(player);
         tickAutoMerge(player, tickCount);
         tickFlowerBed(player, tickCount);
         tickHalo(player, tickCount);

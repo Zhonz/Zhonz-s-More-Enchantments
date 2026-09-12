@@ -181,6 +181,10 @@
     "enchantment.zhonz_more_enchantments.heaven_chain.desc": "Hits have a 25% chance to immobilize and disable attacks for 3s; if triggered within 10s, the duration becomes 0.5× of the last trigger",
     "enchantment.zhonz_more_enchantments.mercy_equal": "Under Mercy, All Equal",
     "enchantment.zhonz_more_enchantments.mercy_equal.desc": "Right-click a beacon with this enchanted item to bind it (consuming the enchantment); all players in range share average offensive attributes",
+    "enchantment.zhonz_more_enchantments.fervent_sincere_hope": "Fervent Sincere Hope",
+    "enchantment.zhonz_more_enchantments.fervent_sincere_hope.desc": "Overflow healing becomes temporary health (capped at 100% of max health, lasts 30s, refreshed on each gain); the cap is removed while any other set enchantment (Silence/Frenzied/Silenced/Selfish) is worn",
+    "enchantment.zhonz_more_enchantments.selfish_clear_sky": "Selfish Clear Sky",
+    "enchantment.zhonz_more_enchantments.selfish_clear_sky.desc": "Healing you receive is multiplied by your critical chance and critical damage; while any other set enchantment (Silence/Frenzied/Silenced/Fervent) is worn it also benefits from your damage bonus",
 
     "death.attack.frost": "%1$s was frozen solid",
     "death.attack.frost.player": "%1$s was frozen solid by %2$s",

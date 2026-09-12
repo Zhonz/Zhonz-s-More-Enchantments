@@ -130,6 +130,11 @@ public class ModTestCommands {
                                 .executes(ModTestCommands::manifestTest)
                         )
 
+                        // === 90/91 暴击五件套: 溢出治疗→临时生命 / 受治疗吃暴击 ===
+                        .then(Commands.literal("settest")
+                                .executes(ModTestCommands::setTest)
+                        )
+
                         // === 血路拓成坦途 测试：给主手武器设置指定生物类型的击杀数 ===
                         .then(Commands.literal("bloodpath")
                                 .then(Commands.argument("mobType", StringArgumentType.string())
@@ -562,6 +567,8 @@ public class ModTestCommands {
             // 73-89 新设计(近战/护甲类可测)
             "snow_wound", "snow_sorrow", "unyielding_fate", "titan", "keen_will", "sharpen",
             "hyperthymesia", "eternal_standing", "eye_lamp", "shatter", "sojourner", "wayfarer",
+            // 90-91 暴击五件套(受治疗侧, 攻击数值不变; 详细断言见 /zhonztest settest)
+            "fervent_sincere_hope", "selfish_clear_sky",
             // 其余(盾/远程/功能性): 只验证数据注册不报错
             "city_shield", "solemn_mourning", "heaven_chain", "thirty_million_turns", "mercy_equal"
     };
@@ -879,6 +886,131 @@ public class ModTestCommands {
                 + "\n  " + String.join("\n  ", lines);
         context.getSource().sendSuccess(() -> Component.literal(report), true);
         return passedFinal;
+    }
+
+    // ===================================================================
+    // 90/91 暴击五件套: 溢出治疗→临时生命 / 受治疗吃暴击
+    // ===================================================================
+
+    /**
+     * 验证 #90 热烈诚挚希望 与 #91 自私澄澈天光:
+     * <ol>
+     *   <li>{@code fervent_cap} —— 胸甲带 #90, 满血治疗 40 → 临时生命按"最大生命 100%"上限截断(=20)</li>
+     *   <li>{@code fervent_nocap} —— 胸甲带 #90 + 头盔带其他套装附魔 → 取消上限, 40 全部转为临时生命</li>
+     *   <li>{@code selfish_heal} —— 胸甲带 #91 且暴击率=1、暴击伤害=2 → 治疗量 ×(1+1×2)</li>
+     *   <li>{@code selfish_none} —— 不穿 #91 → 治疗量不放大(反例)</li>
+     * </ol>
+     * 用 FakePlayer(可穿戴, 且 heal 会走 LivingHealEvent/Apothic 的 HEALING_RECEIVED 缩放)。
+     */
+    private static int setTest(CommandContext<CommandSourceStack> context) {
+        ServerLevel level = context.getSource().getLevel();
+        FakePlayer player = FakePlayerFactory.getMinecraft(level);
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        int passed = 0;
+
+        Holder<Enchantment> fervent = ModEnchantments.getHolderOrNull(ModEnchantments.FERVENT_SINCERE_HOPE);
+        Holder<Enchantment> selfish = ModEnchantments.getHolderOrNull(ModEnchantments.SELFISH_CLEAR_SKY);
+        Holder<Enchantment> silence = ModEnchantments.getHolderOrNull(ModEnchantments.SILENCE_IN_DEPTHS);
+        if (fervent == null || selfish == null || silence == null) {
+            context.getSource().sendFailure(Component.literal("[SetTest] 附魔未注册(fervent/selfish/silence)"));
+            return 0;
+        }
+
+        // ---------- 1/2: #90 溢出治疗(用真实僵尸: FakePlayer 不支持吸收值) ----------
+        boolean capOk = runFerventCase(level, fervent, silence, false);
+        boolean nocapOk = runFerventCase(level, fervent, silence, true);
+        lines.add((capOk ? "PASS " : "FAIL ") + "fervent_cap: 满血治疗40 → 临时生命=20(最大生命100%上限)");
+        lines.add((nocapOk ? "PASS " : "FAIL ") + "fervent_nocap: 头盔带其他套装附魔 → 临时生命=40(上限取消)");
+        if (capOk) passed++;
+        if (nocapOk) passed++;
+
+        // ---------- 3/4: #91 受治疗吃暴击 ----------
+        double healedWith = healWithSelfish(player, selfish, level, true);
+        double healedWithout = healWithSelfish(player, selfish, level, false);
+        // 期望: 暴击率1 × 暴击伤害2 → 治疗量 ×(1+2) = 3 倍
+        boolean selfishOk = Math.abs(healedWith - 3.0 * 4.0) < 0.05;
+        boolean negativeOk = Math.abs(healedWithout - 4.0) < 0.05;
+        lines.add((selfishOk ? "PASS " : "FAIL ") + String.format(
+                "selfish_heal: 暴击1.0/暴伤2.0 时治疗4 → %.2f(期望 12.00)", healedWith));
+        lines.add((negativeOk ? "PASS " : "FAIL ") + String.format(
+                "selfish_none: 不穿#91 时治疗4 → %.2f(期望 4.00)", healedWithout));
+        if (selfishOk) passed++;
+        if (negativeOk) passed++;
+
+        final int passedFinal = passed;
+        final String report = "SetTest: cases=4 passed=" + passedFinal + "\n  " + String.join("\n  ", lines);
+        context.getSource().sendSuccess(() -> Component.literal(report), true);
+        return passedFinal;
+    }
+
+    /**
+     * #90 单个场景(真实僵尸): 满血时治疗 40 → 溢出部分转临时生命。
+     * withAlly=true 时额外戴一件其他套装附魔(头盔)验证"取消上限"。
+     * 注: 必须用真实实体 —— FakePlayer 的 setAbsorptionAmount 不生效(读回恒为 0)。
+     */
+    private static boolean runFerventCase(ServerLevel level, Holder<Enchantment> fervent,
+                                          Holder<Enchantment> ally, boolean withAlly) {
+        LivingEntity victim = EntityType.ZOMBIE.create(level);
+        if (victim == null) return false;
+        victim.moveTo(0.5, 200.0, 0.5, 0.0f, 0.0f);
+        if (victim instanceof net.minecraft.world.entity.Mob mob) {
+            mob.setNoAi(true);
+            mob.setPersistenceRequired();
+        }
+        level.addFreshEntity(victim);
+        resetVictim(victim);
+        victim.setAbsorptionAmount(0.0f);
+        victim.setHealth(victim.getMaxHealth());
+
+        ItemStack chest = new ItemStack(Items.DIAMOND_CHESTPLATE);
+        chest.enchant(fervent, 1);
+        victim.setItemSlot(EquipmentSlot.CHEST, chest);
+        if (withAlly) {
+            ItemStack helmet = new ItemStack(Items.DIAMOND_HELMET);
+            helmet.enchant(ally, 1);
+            victim.setItemSlot(EquipmentSlot.HEAD, helmet);
+        }
+
+        float maxHp = victim.getMaxHealth();
+        victim.heal(40.0f);
+        double absorption = victim.getAbsorptionAmount();
+        double expected = withAlly ? 40.0 : maxHp;
+        LOGGER.info("[SetTest] fervent withAlly={} -> absorption={} (maxHp={}, expected={})",
+                withAlly, absorption, maxHp, expected);
+        victim.discard();
+        return Math.abs(absorption - expected) < 0.05;
+    }
+
+    /** #91 场景: 返回"从半血治疗 4 点"实际生效的治疗量。 */
+    private static double healWithSelfish(FakePlayer player, Holder<Enchantment> selfish,
+                                          ServerLevel level, boolean withEnchant) {
+        for (EquipmentSlot s : EquipmentSlot.values()) player.setItemSlot(s, ItemStack.EMPTY);
+        com.zhonz.moreenchantments.common.storage.EntityDataStorage.removeData(player);
+        player.setAbsorptionAmount(0.0f);
+
+        if (withEnchant) {
+            ItemStack chest = new ItemStack(Items.DIAMOND_CHESTPLATE);
+            chest.enchant(selfish, 1);
+            player.setItemSlot(EquipmentSlot.CHEST, chest);
+        }
+        // 固定暴击参数: 暴击率 1.0(100%)、暴击伤害 2.0 → 期望治疗 ×(1 + 1×2) = 3
+        var critChance = player.getAttribute(dev.shadowsoffire.apothic_attributes.api.ALObjects.Attributes.CRIT_CHANCE);
+        var critDamage = player.getAttribute(dev.shadowsoffire.apothic_attributes.api.ALObjects.Attributes.CRIT_DAMAGE);
+        if (critChance != null) critChance.setBaseValue(1.0);
+        if (critDamage != null) critDamage.setBaseValue(2.0);
+
+        // 刷新 91 的 HEALING_RECEIVED 修饰(该逻辑平时由玩家 tick 驱动)
+        ModEventHandlers.applyTickAttributeEffects(player);
+
+        player.setHealth(5.0f);
+        player.heal(4.0f);
+        double healed = player.getHealth() - 5.0f;
+        double cv = critChance == null ? -1 : player.getAttributeValue(dev.shadowsoffire.apothic_attributes.api.ALObjects.Attributes.CRIT_CHANCE);
+        double dv = critDamage == null ? -1 : player.getAttributeValue(dev.shadowsoffire.apothic_attributes.api.ALObjects.Attributes.CRIT_DAMAGE);
+        double hr = player.getAttributeValue(dev.shadowsoffire.apothic_attributes.api.ALObjects.Attributes.HEALING_RECEIVED);
+        LOGGER.info("[SetTest] selfish withEnchant={} -> healed={} (crit={}, critDmg={}, healingReceived={})",
+                withEnchant, healed, cv, dv, hr);
+        return healed;
     }
 
     private static net.minecraft.nbt.CompoundTag getFakeData(FakePlayer fakePlayer) {

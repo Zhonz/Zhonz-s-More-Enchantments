@@ -183,6 +183,10 @@
     "enchantment.zhonz_more_enchantments.heaven_chain.desc": "攻击命中后有25%概率使敌方无法移动、无法攻击3秒；若触发间隔不超过10秒，则效果时长变为上一次的0.5倍",
     "enchantment.zhonz_more_enchantments.mercy_equal": "慈悲之下，众生平等",
     "enchantment.zhonz_more_enchantments.mercy_equal.desc": "无法直接附魔在信标上：手持带慈悲附魔的物品右键信标将其绑定（消耗该物品上的慈悲附魔）；此后信标范围内所有玩家的攻击类属性平均值生效于全体玩家",
+    "enchantment.zhonz_more_enchantments.fervent_sincere_hope": "热烈诚挚希望",
+    "enchantment.zhonz_more_enchantments.fervent_sincere_hope.desc": "穿戴时受到的溢出治疗转化为临时生命值（上限为最大生命值的100%，持续30秒，每次获得刷新持续时间）；身上任意一件带有其他套装附魔（沉默/狂热/噤声/自私）时取消上限",
+    "enchantment.zhonz_more_enchantments.selfish_clear_sky": "自私澄澈天光",
+    "enchantment.zhonz_more_enchantments.selfish_clear_sky.desc": "穿戴时受到的治疗量在最终生效时也会受到暴击率与暴击伤害加成；身上任意一件带有其他套装附魔（沉默/狂热/噤声/热烈）时，该治疗量额外受到增伤加成",
 
     "death.attack.frost": "%1$s被冻僵了",
     "death.attack.frost.player": "%1$s被%2$s冻僵了",

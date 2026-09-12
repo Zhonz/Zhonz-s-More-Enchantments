@@ -8,6 +8,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.AbstractArrow;
+import net.minecraft.world.entity.projectile.ItemSupplier;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
@@ -18,8 +19,12 @@ import net.minecraft.world.phys.Vec3;
 /**
  * 必须开辟的通路 重锤投掷物实体。
  * 从玩家手中飞出，命中实体或方块时造成1000%伤害并将玩家传送至命中点。
+ *
+ * <p>实现 {@link ItemSupplier} 是为了让客户端能用 {@code ThrownItemRenderer} 渲染
+ * (该类要求 {@code Entity & ItemSupplier}); 否则该实体类型在客户端没有渲染器,
+ * {@code EntityRenderDispatcher.shouldRender} 会因 renderer 为 null 而 NPE 崩溃。
  */
-public class ThrownMaceEntity extends AbstractArrow {
+public class ThrownMaceEntity extends AbstractArrow implements ItemSupplier {
 
     /** 冷却时间(Ticks): 5秒 = 100 ticks. */
     private static final int COOLDOWN_TICKS = 100;
@@ -44,6 +49,13 @@ public class ThrownMaceEntity extends AbstractArrow {
     @Override
     protected ItemStack getDefaultPickupItem() {
         return ItemStack.EMPTY;
+    }
+
+    /** 客户端渲染用: 返回投掷时携带的重锤(不可拾取, 仅用于 ThrownItemRenderer 画出物品)。 */
+    @Override
+    public ItemStack getItem() {
+        ItemStack stack = this.getPickupItemStackOrigin();
+        return stack.isEmpty() ? new ItemStack(net.minecraft.world.item.Items.MACE) : stack;
     }
 
     @Override

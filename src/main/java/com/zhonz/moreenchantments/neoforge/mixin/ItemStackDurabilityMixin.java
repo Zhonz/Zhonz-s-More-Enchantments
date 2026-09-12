@@ -75,6 +75,11 @@ public class ItemStackDurabilityMixin {
             amount = Math.max(1, (int) Math.ceil(amount * 0.2));
         }
 
+        // 鱼丸: 自身耐久变为十倍 → 耐久消耗降至 1/10
+        if (self.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.FISHBALL)) > 0) {
+            amount = Math.max(1, (int) Math.ceil(amount * 0.1));
+        }
+
         int toughnessLevel = self.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.TOUGHNESS));
         if (toughnessLevel <= 0) {
             // 无坚韧: 若永恒屹立已削减 amount, 必须自行落盘(否则局部变量修改被丢弃 → -80% 失效)

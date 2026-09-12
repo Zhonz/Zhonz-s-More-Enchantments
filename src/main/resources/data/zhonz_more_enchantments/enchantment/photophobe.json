@@ -1,6 +1,6 @@
 {
   "description": { "translate": "enchantment.zhonz_more_enchantments.photophobe" },
-  "exclusive_set": "#zhonz_more_enchantments:enchantable/exclusive_set/light",
+  "exclusive_set": "#zhonz_more_enchantments:exclusive_set/light",
   "supported_items": "#minecraft:enchantable/head_armor",
   "weight": 5, "max_level": 1,
   "min_cost": { "base": 15, "per_level_above_first": 0 },

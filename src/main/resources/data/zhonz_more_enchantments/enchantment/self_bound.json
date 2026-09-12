@@ -2,7 +2,6 @@
   "description": {
     "translate": "enchantment.zhonz_more_enchantments.self_bound"
   },
-  "exclusive_set": "#minecraft:enchantable/exclusive_set/curse",
   "supported_items": "#minecraft:enchantable/leg_armor",
   "weight": 1,
   "max_level": 1,

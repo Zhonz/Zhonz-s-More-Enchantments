@@ -68,6 +68,14 @@ public class ModEventHandlers {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("ZhonzMoreEnchantments");
     private static final Random RANDOM = new Random();
 
+    // ===== 溅射重入防护 =====
+    // 溅射/溅射型效果的 hurt() 会同步重入伤害管线(onLivingDamage → applyAttackerEnchantments),
+    // 若不防护, 同一附魔会在自己的溅射伤害上再次触发(倍率重复叠加 + 递归溅射)。
+    // 服务端伤害处理为单线程, 故用静态布尔标志即可(置位期间的重入直接放行)。
+    private static boolean explosiveDawnSplashing = false;
+    private static boolean areaStrikeSplashing = false;
+    private static boolean mourningBursting = false;
+
     // ===== Persistent Data Keys =====
     private static final String KEY_LIBERATOR_LAST_ATTACK = "zhonz_liberator_last_attack";
     private static final String KEY_FLEETING_GRACE_STORED = "zhonz_fleeting_grace_stored";
@@ -184,6 +192,7 @@ public class ModEventHandlers {
     // ===== 新附魔(45-53)修饰符 ID =====
     private static final ResourceLocation APEX_DODGE_MODIFIER = rl("apex_dodge");
     private static final ResourceLocation APEX_DAMAGE_MODIFIER = rl("apex_damage");
+    private static final ResourceLocation APEX_MOVEMENT_MODIFIER = rl("apex_movement");
     private static final ResourceLocation CORNERED_HEALING_MODIFIER = rl("cornered_beast_healing");
     private static final ResourceLocation VIOLENT_ATTACK_SPEED_MODIFIER = rl("violent_pulse_attack_speed");
     private static final ResourceLocation VIOLENT_MOVEMENT_MODIFIER = rl("violent_pulse_movement");
@@ -352,11 +361,6 @@ public class ModEventHandlers {
         // --- 73-89 防御侧(免疫/保命/标记副作用; 易伤/减伤乘法已迁 incoming_damage 通道) ---
         applyUnyieldingFateInvuln(defender, event);
         applyEyeLampMark(defender, event);
-    }
-
-        private static float applyFleshBoneIncoming(LivingEntity defender, float amount) {
-        // 已迁 refreshIncomingAggregate(主手 ×1.3/×0.7); 保留文档对照
-        return amount;
     }
 
     private static boolean tryFinale(LivingEntity attacker, LivingEntity defender, DamageSource source,
@@ -672,7 +676,7 @@ public class ModEventHandlers {
         applyBloodWeepCost(attacker);
         applyShellStrip(attacker, defender, amount);
         applySuppression(attacker, defender);
-        applyExplosiveDawn(attacker, defender, source, mainHand, amount);
+        amount = applyExplosiveDawn(attacker, defender, source, mainHand, amount);
         applyFoolsMaskSideEffects(attacker, defender);
         amount = applyFleetingGraceBonus(attacker, amount);
         applyFlippingCoin(attacker, defender);
@@ -693,11 +697,9 @@ public class ModEventHandlers {
         // --- 43. 燃烧的黄昏: 对燃烧目标叠加火焰易伤 ---
         applyBurningDusk(attacker, defender);
         // --- 46-52. 攻击侧: 困兽之斗/剧烈搏动/不停狩/新太阳/极速攀升 ---
-        amount = applyCorneredBeastDamage(attacker, amount);
         amount = applyViolentPulseAttack(attacker, amount);
         applyCeaselessHuntStack(attacker); // 叠层副作用(伤害+5%/层已迁 computeEventBonusPercent)
         amount = applyNewSun(attacker, defender, amount);
-        amount = applyRapidAscentDamage(attacker, amount);
         // --- 54-57. 止步/惨白的午夜/悲伤的红 ---
         applyHaltSlow(attacker, defender); // 减速副作用(伤害+40%已迁 computeEventBonusPercent)
         applyPaleMidnightMark(attacker, defender); // 发光+易伤副作用(伤害+50%已迁 computeEventBonusPercent)
@@ -716,10 +718,13 @@ public class ModEventHandlers {
     private static float applySanction(LivingEntity attacker, LivingEntity defender, float amount) {
         int sanctionLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.SANCTION);
         if (sanctionLevel <= 0) return amount;
+        // 4. 制裁: 目标最大生命值 1%/2%/3% 的真伤, 写入 flat_damage 事件临时通道,
+        // 由统一结算(+flat)在护甲结算后加入 → 无视护甲/减免, 且参与最终伤害判定
+        // (而非旧版直接 setHealth, 避免 setHealth(0) 不触发死亡 / 不参与后续结算)。
         float trueDamage = defender.getMaxHealth() * (0.01f * sanctionLevel);
-        defender.setHealth(Math.max(0, defender.getHealth() - trueDamage));
+        setFlatDamage(attacker, EVENT_FLAT_SANCTION, trueDamage);
         if (LOGGER.isDebugEnabled()) {
-            LOGGER.debug("[Sanction] Dealt {} true damage (level={})", trueDamage, sanctionLevel);
+            LOGGER.debug("[Sanction] Added {} true damage via flat_damage (level={})", trueDamage, sanctionLevel);
         }
         return amount;
     }
@@ -733,19 +738,27 @@ public class ModEventHandlers {
 
     private static void applyAreaStrike(LivingEntity attacker, LivingEntity defender, DamageSource source,
                                         ItemStack mainHand, float amount) {
+        if (areaStrikeSplashing) return; // 重入: 溅射伤害不再触发本附魔
         int areaStrikeLevel = getMainHandEnchantmentLevel(attacker, ModEnchantments.AREA_STRIKE);
         if (areaStrikeLevel <= 0 || !isRangedWeapon(mainHand)) return;
+        // 已附魔事件判定: 必须是远程投射物的落点(手持远程武器做近战不触发), 与描述"攻击落点"一致
+        if (!(source.getDirectEntity() instanceof Projectile)) return;
 
-        double radius = 2.0 + areaStrikeLevel * 2.0;
+        double radius = areaStrikeLevel * 2.0; // 2/4/6 格
         float aoeRatio = areaStrikeLevel == 1 ? 0.30f : (areaStrikeLevel == 2 ? 0.40f : 0.55f);
         float aoeDamage = amount * aoeRatio;
-        for (LivingEntity nearby : defender.level().getEntitiesOfClass(LivingEntity.class,
-                defender.getBoundingBox().inflate(radius))) {
-            if (nearby == defender || nearby == attacker || !nearby.isAlive() || !attacker.canAttack(nearby)) {
-                continue;
+        areaStrikeSplashing = true;
+        try {
+            for (LivingEntity nearby : defender.level().getEntitiesOfClass(LivingEntity.class,
+                    defender.getBoundingBox().inflate(radius))) {
+                if (nearby == defender || nearby == attacker || !nearby.isAlive() || !attacker.canAttack(nearby)) {
+                    continue;
+                }
+                float falloff = (float) Math.max(0, 1.0 - (nearby.distanceTo(defender) / radius));
+                nearby.hurt(source, aoeDamage * falloff);
             }
-            float falloff = (float) Math.max(0, 1.0 - (nearby.distanceTo(defender) / radius));
-            nearby.hurt(source, aoeDamage * falloff);
+        } finally {
+            areaStrikeSplashing = false;
         }
     }
 
@@ -805,27 +818,39 @@ public class ModEventHandlers {
         attacker.getMainHandItem().setCount(0);
     }
 
-    private static void applyExplosiveDawn(LivingEntity attacker, LivingEntity defender, DamageSource source,
-                                           ItemStack mainHand, float amount) {
+    private static float applyExplosiveDawn(LivingEntity attacker, LivingEntity defender, DamageSource source,
+                                            ItemStack mainHand, float amount) {
+        if (explosiveDawnSplashing) return amount; // 重入: 溅射伤害不再触发本附魔
         if (getMainHandEnchantmentLevel(attacker, ModEnchantments.EXPLOSIVE_DAWN) <= 0
                 || mainHand.getItem() != Items.CROSSBOW) {
-            return;
+            return amount;
         }
-        float splashDamage = amount * 4.0f;
-        double splashRadius = 15.0;
-        // 三次大范围溅射
-        for (int wave = 0; wave < 3; wave++) {
-            double waveRadius = splashRadius * (0.6 + 0.2 * wave);
-            for (LivingEntity nearby : defender.level().getEntitiesOfClass(LivingEntity.class,
-                    defender.getBoundingBox().inflate(waveRadius))) {
-                if (nearby == defender || nearby == attacker || !nearby.isAlive() || !attacker.canAttack(nearby)) {
-                    continue;
+        // 已附魔事件判定: 必须是弩箭投射物命中(手持弩做近战不触发), 与描述"弩的伤害"一致
+        if (!(source.getDirectEntity() instanceof Projectile)) {
+            return amount;
+        }
+        // 25. 爆裂黎明: 弩的伤害 +300% → 直击 ×4; 溅射中心 = 直击(已×4)的 100%, 15 格外 0%
+        explosiveDawnSplashing = true;
+        try {
+            float boosted = amount * 4.0f;
+            double splashRadius = 15.0;
+            // 三次大范围溅射
+            for (int wave = 0; wave < 3; wave++) {
+                double waveRadius = splashRadius * (0.6 + 0.2 * wave);
+                for (LivingEntity nearby : defender.level().getEntitiesOfClass(LivingEntity.class,
+                        defender.getBoundingBox().inflate(waveRadius))) {
+                    if (nearby == defender || nearby == attacker || !nearby.isAlive() || !attacker.canAttack(nearby)) {
+                        continue;
+                    }
+                    float falloff = (float) Math.max(0, 1.0 - (nearby.distanceTo(defender) / waveRadius));
+                    nearby.hurt(source, boosted * falloff);
                 }
-                float falloff = (float) Math.max(0, 1.0 - (nearby.distanceTo(defender) / waveRadius));
-                nearby.hurt(source, splashDamage * falloff);
             }
+            getEntityData(attacker).putBoolean(KEY_EXPLOSIVE_DAWN_RELOADING, true);
+            return boosted;
+        } finally {
+            explosiveDawnSplashing = false;
         }
-        getEntityData(attacker).putBoolean(KEY_EXPLOSIVE_DAWN_RELOADING, true);
     }
 
     /** 假面的愚者: 随机乘数 ×(1~3)/×(0.01~1) 已迁 computeEventConditionalMultiplier; 此处仅随机 buff/debuff 副作用。 */
@@ -884,7 +909,7 @@ public class ModEventHandlers {
         if (targetStacks < 3) {
             targetStacks++;
             defenderData.putInt(KEY_FLIPPING_COIN_TARGET_STACKS, targetStacks);
-            defender.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 600, 0));
+            defender.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 600, targetStacks - 1));
             var maxHp = defender.getAttribute(Attributes.MAX_HEALTH);
             if (maxHp != null) {
                 maxHp.removeModifier(FLIPPING_COIN_TARGET_MAX_HP);
@@ -908,20 +933,6 @@ public class ModEventHandlers {
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("[GrievousWound] Applied -30% healing received to {} for 5s", defender.getName().getString());
         }
-    }
-
-    private static float applyBloodPathBonus(LivingEntity attacker, LivingEntity defender, float amount) {
-        ItemStack weapon = attacker.getMainHandItem();
-        if (weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BLOOD_PATH)) <= 0) return amount;
-        String mobKey = getMobTypeId(defender);
-        int kills = getBloodPathKillCount(weapon, mobKey);
-        if (kills <= 0) return amount;
-        float multiplier = 1.0f + kills * 0.001f; // +0.1% per kill
-        if (LOGGER.isDebugEnabled()) {
-            LOGGER.debug("[BloodPath] mob={}, kills={}, multiplier={}, amount={} -> {}",
-                    mobKey, kills, multiplier, amount, amount * multiplier);
-        }
-        return amount * multiplier;
     }
 
     private static String getMobTypeId(LivingEntity entity) {
@@ -963,12 +974,6 @@ public class ModEventHandlers {
         CustomData.update(DataComponents.CUSTOM_DATA, weapon, root -> {
             root.put(BLOOD_PATH_TAG, killCounts.copy());
         });
-    }
-
-    // --- 37. 断汝筋骨 Bone Break: +500% outgoing damage (6x multiplier) ---
-    private static float applyBoneBreakAttack(LivingEntity attacker, float amount) {
-        // 已迁移: ×6 乘伤由 tickDamageMultiplierAggregator 写入 damage_multiplier
-        return amount;
     }
 
     private static float applyDefenderEnchantments(LivingEntity defender, DamageSource source, float amount) {
@@ -1071,16 +1076,6 @@ public class ModEventHandlers {
             nearby.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 60, 2));
         }
         data.putInt(KEY_EMERGENCY_RESCUE_CD, 200);
-    }
-
-    /** 已迁入 incoming_damage 通道(mySeaDomainVulnerabilityFactor), 保留文档对照。 */
-    private static float applyMySeaDomainVulnerability(LivingEntity defender, float amount) {
-        return amount;
-    }
-
-    /** 已迁入 incoming_damage 通道(prophetsCallFactor), 保留文档对照。 */
-    private static float applyProphetsCallBonus(LivingEntity defender, float amount) {
-        return amount;
     }
 
     // ===================================================================
@@ -1229,10 +1224,6 @@ public class ModEventHandlers {
         }
     }
 
-        private static void applyBurningDuskVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 burningDuskFactor(incoming_damage 通道); 保留文档对照
-    }
-
     // --- 44. 比任何人都要悲伤的哭泣之子: 火焰免疫 / 点燃双方 / 自身燃烧增伤 ---
     // 统一火焰免疫: 免疫与穿透共存, 穿透优先 —— 哭泣之火的"哭泣分支"无视对方一切火免
     private static boolean isPiercingWeepingFire(DamageSource source) {
@@ -1267,20 +1258,18 @@ public class ModEventHandlers {
                 || getSlotEnchantmentLevel(entity, ModEnchantments.APEX, EquipmentSlot.OFFHAND) > 0;
     }
 
-    // --- 45. "顶点": 主/副手 闪避+20%, 伤害+500%, 受伤-60% (无法正常获取) ---
+    // --- 45. "顶点": 主/副手 闪避+100%, 伤害+1000%(×11), 移速+100% (无法正常获取) ---
     private static void tickApex(Player player, CompoundTag data) {
         int level = isHoldingApex(player) ? 1 : 0;
         int last = data.getInt("zhonz_apex_last");
         if (level == last) return;
         data.putInt("zhonz_apex_last", level);
         setTransient(player, ALObjects.Attributes.DODGE_CHANCE, APEX_DODGE_MODIFIER,
-                level > 0 ? 0.20 : 0, AttributeModifier.Operation.ADD_VALUE);
+                level > 0 ? 1.00 : 0, AttributeModifier.Operation.ADD_VALUE);
         setTransient(player, Attributes.ATTACK_DAMAGE, APEX_DAMAGE_MODIFIER,
-                level > 0 ? 5.0 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
-    }
-
-        private static void applyApexIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 refreshIncomingAggregate(×0.4); 保留文档对照
+                level > 0 ? 10.0 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+        setTransient(player, Attributes.MOVEMENT_SPEED, APEX_MOVEMENT_MODIFIER,
+                level > 0 ? 1.0 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
     }
 
     // --- 46. 困兽之斗: 头盔, 生命<25% 受伤-50% 伤害+60% 治疗+50% ---
@@ -1296,15 +1285,6 @@ public class ModEventHandlers {
         data.putInt("zhonz_cornered_last", level);
         setTransient(player, ALObjects.Attributes.HEALING_RECEIVED, CORNERED_HEALING_MODIFIER,
                 level > 0 ? 0.50 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
-    }
-
-        private static void applyCorneredBeastIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 refreshIncomingAggregate(×0.5); 保留文档对照
-    }
-
-    private static float applyCorneredBeastDamage(LivingEntity attacker, float amount) {
-        // 伤害+60% 已迁移到 bonus_damage 通道(tickCorneredBeast), 链上不再乘算
-        return amount;
     }
 
     // --- 47. 剧烈搏动: 胸甲, 生命<50% 攻速+50% 移速+30% 攻击回复1生命 ---
@@ -1369,10 +1349,6 @@ public class ModEventHandlers {
         }
     }
 
-        private static void applyCeaselessHuntIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 ceaselessHuntFactor(incoming_damage 通道); 保留文档对照
-    }
-
     // --- 50. "新太阳": 护腿, 光照越高伤害越高(15级+150%), 攻击点燃目标 ---
     private static float applyNewSun(LivingEntity attacker, LivingEntity defender, float amount) {
         if (getSlotEnchantmentLevel(attacker, ModEnchantments.NEW_SUN, EquipmentSlot.LEGS) <= 0) return amount;
@@ -1411,20 +1387,10 @@ public class ModEventHandlers {
                 level > 0 ? 2 : 0, AttributeModifier.Operation.ADD_VALUE);
     }
 
-    private static float applyRapidAscentDamage(LivingEntity attacker, float amount) {
-        if (getSlotEnchantmentLevel(attacker, ModEnchantments.RAPID_ASCENT, EquipmentSlot.FEET) <= 0) return amount;
-        // 加伤部分已迁移到 bonus_damage 属性通道(tickRapidAscentBonus), 此处不再乘算
-        return amount;
-    }
-
     /** 极速攀升: 攻击侧增伤 = y/100(y=20 → +20%), 写入 bonus_damage(percent 计算下沉 common)。受伤减半在事件内。 */
     private static void tickRapidAscentBonus(Player player) {
         addPercentBonus(player, RAPID_ASCENT_BONUS_MODIFIER,
                 com.zhonz.moreenchantments.common.damage.TickBonusRules.rapidAscent(EVENT_COND_CTX.levels, player));
-    }
-
-        private static void applyRapidAscentIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 refreshIncomingAggregate(y<0 减伤); 保留文档对照
     }
 
     // --- 53. 加速的未来: 头盔, 增伤=闪避率×2, 攻速=闪避率 ---
@@ -1479,17 +1445,8 @@ public class ModEventHandlers {
         getEntityData(defender).putLong(KEY_PALE_VULN_UNTIL, defender.level().getGameTime() + 600);
     }
 
-        private static void applyPaleMidnightVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 paleVulnerabilityFactor(incoming_damage 通道); 保留文档对照
-    }
-
     // --- 57. "悲伤的红": 胸甲, 背包每有一格有物品增伤10% ---
-    // 已迁移: 增伤百分比累加到 bonus_damage 属性(见 tickSorrowfulRedBonus), 不再在伤害链手写乘法。
-    @Deprecated
-    private static float applySorrowfulRed(LivingEntity attacker, float amount) {
-        return amount;
-    }
-
+    // 已迁移: 增伤百分比累加到 bonus_damage 属性(见 tickSorrowfulRedBonus)。
     /** 每 tick 把悲伤的红"背包每格+10%"写入 bonus_damage(percent 计算下沉 common)。 */
     private static void tickSorrowfulRedBonus(Player player) {
         addPercentBonus(player, SORROWFUL_RED_BONUS_MODIFIER,
@@ -1530,7 +1487,9 @@ public class ModEventHandlers {
 
     // --- 60. "奢侈的希望": 盔甲, 满血受伤+50%; 低于满血 50%穿甲+20%幸运 ---
     private static void tickLuxuriousHope(Player player, CompoundTag data) {
-        boolean active = getEnchantmentLevel(player, ModEnchantments.LUXURIOUS_HOPE) > 0;
+        // 60. 奢侈的希望: 50%穿甲 + 20%幸运仅在"血量低于满血"时生效(满血时改为受伤+50%, 见 refreshIncomingAggregate)
+        boolean active = getEnchantmentLevel(player, ModEnchantments.LUXURIOUS_HOPE) > 0
+                && player.getHealth() < player.getMaxHealth();
         int last = data.getInt("zhonz_luxurious_last");
         int now = active ? 1 : 0;
         if (now == last) return;
@@ -1544,10 +1503,6 @@ public class ModEventHandlers {
                 0.5, AttributeModifier.Operation.ADD_VALUE);
         setTransient(player, Attributes.LUCK, LUXURIOUS_LUCK_MODIFIER,
                 0.2, AttributeModifier.Operation.ADD_VALUE);
-    }
-
-        private static void applyLuxuriousHopeIncoming(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 refreshIncomingAggregate(×1.5); 保留文档对照
     }
 
     // --- 61. 嗜光: 头盔, 光照>0 持续回饱食度 ---
@@ -1858,6 +1813,7 @@ public class ModEventHandlers {
 
     /** 83. 庄严哀悼: 若目标死于带该附魔的远程武器且最近有命中记录, 对 3 格内敌人造成一次等额伤害。 */
     private static void trySolemnMourningBurst(LivingDeathEvent event) {
+        if (mourningBursting) return; // 重入: 击杀溅射不再连锁触发
         DamageSource source = event.getSource();
         Entity src = source.getEntity();
         if (!(src instanceof LivingEntity attacker)) return;
@@ -1865,10 +1821,15 @@ public class ModEventHandlers {
         float last = getEntityData(attacker).getFloat(KEY_MOURNING_LAST);
         if (last <= 0) return;
         LivingEntity victim = event.getEntity();
-        for (LivingEntity target : victim.level().getEntitiesOfClass(LivingEntity.class,
-                victim.getBoundingBox().inflate(3.0))) {
-            if (target == attacker || target == victim) continue;
-            target.hurt(victim.level().damageSources().indirectMagic(source.getDirectEntity(), attacker), last);
+        mourningBursting = true;
+        try {
+            for (LivingEntity target : victim.level().getEntitiesOfClass(LivingEntity.class,
+                    victim.getBoundingBox().inflate(3.0))) {
+                if (target == attacker || target == victim) continue;
+                target.hurt(victim.level().damageSources().indirectMagic(source.getDirectEntity(), attacker), last);
+            }
+        } finally {
+            mourningBursting = false;
         }
         getEntityData(attacker).remove(KEY_MOURNING_LAST);
     }
@@ -2046,6 +2007,31 @@ public class ModEventHandlers {
             }
             return;
         }
+    }
+
+    // ===================================================================
+    // EntityTickEvent - 83. 庄严哀悼: 远程投射物拖出白色与黑色粒子
+    // ===================================================================
+
+    /**
+     * 83. 庄严哀悼: 带该附魔的远程武器射出的箭/三叉戟等投射物, 飞行途中拖出白色与黑色粒子。
+     * 判定口径与其余远程附魔一致: 投射物的发射者主手仍持该附魔。
+     */
+    @SubscribeEvent
+    public static void onProjectileTick(net.neoforged.neoforge.event.tick.EntityTickEvent.Post event) {
+        Entity entity = event.getEntity();
+        if (!(entity instanceof Projectile projectile)) return;
+        if (projectile.level().isClientSide()) return;
+        if (!(projectile.getOwner() instanceof LivingEntity shooter)) return;
+        if (getMainHandEnchantmentLevel(shooter, ModEnchantments.SOLEMN_MOURNING) <= 0) return;
+        if (!(projectile.level() instanceof ServerLevel serverLevel)) return;
+
+        double px = projectile.getX();
+        double py = projectile.getY() + projectile.getBbHeight() * 0.5;
+        double pz = projectile.getZ();
+        // 白色粒子 + 黑色粒子
+        serverLevel.sendParticles(ParticleTypes.WHITE_ASH, px, py, pz, 1, 0.03, 0.03, 0.03, 0.0);
+        serverLevel.sendParticles(ParticleTypes.SQUID_INK, px, py, pz, 1, 0.03, 0.03, 0.03, 0.0);
     }
 
     // ===================================================================
@@ -2247,16 +2233,7 @@ public class ModEventHandlers {
     private static void tickFishball(Player player, int tickCount) {
         if (getEnchantmentLevel(player, ModEnchantments.FISHBALL) <= 0) return;
 
-        // 10x durability: regen 1 durability every 2s on any Fishball item the player carries.
-        // Includes chest/offhand and inventory; the inventory loop also covers the equipment slots.
-        if (tickCount % 40 == 0) {
-            for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
-                ItemStack stack = player.getInventory().getItem(i);
-                if (hasFishball(stack) && stack.isDamageableItem() && stack.getDamageValue() > 0) {
-                    stack.setDamageValue(Math.max(0, stack.getDamageValue() - 1));
-                }
-            }
-        }
+        // 十倍耐久由 ItemStackDurabilityMixin 实现(鱼丸物品耐久消耗降至 1/10); 此处不再被动回复。
 
         // Locate a single Fishball piece to act as the durability sink. Prefer equipped chest, then offhand.
         ItemStack fishballStack = player.getItemBySlot(EquipmentSlot.CHEST);
@@ -2640,6 +2617,7 @@ public class ModEventHandlers {
     // flat 绝对加伤事件临时 modifier(round13): fleet_footsteps/floating_grace 各一独立 id
     private static final ResourceLocation EVENT_FLAT_FLEET = rl("event_flat_fleet");
     private static final ResourceLocation EVENT_FLAT_GRACE = rl("event_flat_grace");
+    private static final ResourceLocation EVENT_FLAT_SANCTION = rl("event_flat_sanction");
 
     /** flat 写入辅助: 把固定点数加伤写入 flat_damage(独立 id, ADD_VALUE 绝对量)。委托引擎。 */
     private static void setFlatDamage(LivingEntity entity, ResourceLocation id, double value) {
@@ -2653,6 +2631,7 @@ public class ModEventHandlers {
         if (inst == null) return;
         inst.removeModifier(EVENT_FLAT_FLEET);
         inst.removeModifier(EVENT_FLAT_GRACE);
+        inst.removeModifier(EVENT_FLAT_SANCTION);
     }
 
     /** 事件条件判定上下文(stage2: 等级查询/血路击杀委托平台层实现, 键与事件层共享)。 */
@@ -2756,8 +2735,6 @@ public class ModEventHandlers {
      */
     private static void refreshIncomingAggregate(LivingEntity defender) {
         double product = 1.0D;
-        // 45. 顶点(主/副手): 受伤 -60% → ×0.4
-        if (isHoldingApex(defender)) product *= 0.4D;
         // 46. 困兽之斗(头盔, 生命<25%): 受伤 -50% → ×0.5
         if (getSlotEnchantmentLevel(defender, ModEnchantments.CORNERED_BEAST, EquipmentSlot.HEAD) > 0
                 && defender.getHealth() <= defender.getMaxHealth() * 0.25f) {
@@ -2819,11 +2796,6 @@ public class ModEventHandlers {
                 serverLevel.setWeatherParameters(0, 400, true, false);
             }
         }
-    }
-
-        private static float applyWinterMarkVulnerability(LivingEntity defender, LivingIncomingDamageEvent event) {
-        // 已迁 winterMarkFactor(incoming_damage 通道); 保留文档对照
-        return event.getAmount();
     }
 
     // --- 75. "唯有命运...": 装备无法破坏; 生命不低于1; 伤害+500% 且类型为真实伤害 ---

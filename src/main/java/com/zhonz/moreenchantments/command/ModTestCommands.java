@@ -28,6 +28,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -156,11 +157,14 @@ public class ModTestCommands {
     // ============== Helpers ==============
 
     private static Item getTestWeapon(String enchantPath) {
-        if (enchantPath.equals("area_strike") || enchantPath.equals("explosive_dawn") || enchantPath.equals("my_sea_domain")) {
-            return Items.BOW;
+        if (enchantPath.equals("area_strike")) {
+            return Items.BOW; // 远程武器附魔
         }
-        if (enchantPath.equals("suppression")) {
-            return Items.TRIDENT;
+        if (enchantPath.equals("explosive_dawn")) {
+            return Items.CROSSBOW; // 弩附魔
+        }
+        if (enchantPath.equals("my_sea_domain") || enchantPath.equals("suppression")) {
+            return Items.TRIDENT; // 三叉戟附魔
         }
         if (enchantPath.equals("solemn_mourning") || enchantPath.equals("heaven_chain")) {
             return Items.BOW; // 远程武器附魔
@@ -491,12 +495,23 @@ public class ModTestCommands {
         Holder<Enchantment> enchantHolder = resolveEnchant(context);
         if (enchantHolder == null) return 0;
 
-        ItemStack sword = new ItemStack(Items.DIAMOND_SWORD);
-        sword.enchant(enchantHolder, level);
-        player.getInventory().add(sword);
+        // 按附魔自动选择载体(与 testall 的 getTestWeapon 一致): 三千万转→下界之星、
+        // 慈悲→附魔书、铸就全一城盾→盾牌、远程附魔→弓/弩/三叉戟、其余→钻石剑。
+        ItemStack weapon = new ItemStack(getTestWeapon(enchantId.getPath()));
+        if (weapon.is(Items.ENCHANTED_BOOK)) {
+            // 附魔书走 stored_enchantments(与创造模式附魔书一致), 而非直接附魔
+            ItemEnchantments.Mutable mut = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
+            mut.set(enchantHolder, level);
+            weapon.set(DataComponents.STORED_ENCHANTMENTS, mut.toImmutable());
+        } else {
+            weapon.enchant(enchantHolder, level);
+        }
+        // 载体名必须在 add() 之前取: Inventory.add 会把来源栈搬进背包并清空它
+        final Item givenItem = weapon.getItem();
+        player.getInventory().add(weapon);
 
         context.getSource().sendSuccess(() -> Component.literal(
-                "Gave " + enchantId + " " + level + " sword to " + player.getName().getString()
+                "Gave " + enchantId + " " + level + " " + givenItem + " to " + player.getName().getString()
         ), true);
         return 1;
     }
@@ -639,7 +654,22 @@ public class ModTestCommands {
 
                 float before = dummy.getHealth();
                 dummy.invulnerableTime = 0;
-                boolean r = dummy.hurt(level.damageSources().playerAttack(fakePlayer), base);
+                // 群体打击/爆裂黎明是"投射物落点"效果: 必须用真实投射物伤害源(否则手持近战不触发)
+                DamageSource damageSource;
+                if (path.equals("area_strike") || path.equals("explosive_dawn")) {
+                    var arrow = net.minecraft.world.entity.EntityType.ARROW.create(level);
+                    if (arrow != null) {
+                        arrow.setOwner(fakePlayer);
+                        arrow.setPos(dummy.getX(), dummy.getY(), dummy.getZ());
+                        level.addFreshEntity(arrow);
+                        damageSource = level.damageSources().arrow(arrow, fakePlayer);
+                    } else {
+                        damageSource = level.damageSources().playerAttack(fakePlayer);
+                    }
+                } else {
+                    damageSource = level.damageSources().playerAttack(fakePlayer);
+                }
+                boolean r = dummy.hurt(damageSource, base);
                 float after = dummy.getHealth();
                 LOGGER.info("[TestAll] {} => dmg={} (base={}, died={}, hurt={})",
                         path, String.format("%.2f", before - after), String.format("%.2f", base),

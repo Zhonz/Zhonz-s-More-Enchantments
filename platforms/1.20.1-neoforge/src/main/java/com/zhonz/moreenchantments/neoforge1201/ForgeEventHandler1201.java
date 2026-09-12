@@ -103,6 +103,13 @@ public final class ForgeEventHandler1201 {
                     new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "event_bonus_temp"),
                     eventBonus);
 
+            // --- 攻击侧 flat 通道(倏忽恩赐 / 目不能追): 1.21 原相位 = 统一结算前写入 flat_damage
+            //     (applyFleetingGraceBonus L854 / applyFleetFootstepsDamage L1160 位于
+            //     applyAttackerEnchantments 内, 由同一次 applyUnifiedDamageAttributes 消费),
+            //     故必须在读 flat 属性值 / settle 之前调用; settle 后由 clearTransientFlat 清除。 ---
+            AttackSideBatch1.applyFleetingGraceBonus(attacker);
+            AttackSideBatch1.applyFleetFootstepsDamage(attacker, amount);
+
             // 统一结算
             double bonus = attacker.getAttributeValue(ZhonzAttributes1201.BONUS_DAMAGE.get());
             double mult = attacker.getAttributeValue(ZhonzAttributes1201.DAMAGE_MULTIPLIER.get());
@@ -116,6 +123,8 @@ public final class ForgeEventHandler1201 {
             UnifiedDamageEngine.clearEventBonusTemporary(
                     attacker.getAttribute(ZhonzAttributes1201.BONUS_DAMAGE.get()),
                     new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "event_bonus_temp"));
+            // flat 事件临时 modifier 清除(1.21 clearEventFlatTemporary L2651; 幂等)
+            AttackSideBatch1.clearTransientFlat(attacker);
 
             // 攻击命中副作用(与 1.21 同相位: 溅射/剥壳/爆裂黎明以"结算前 amount"为基准)
             amount = SideEffectsBatch1.applySanction(attacker, defender, amount);
@@ -144,9 +153,22 @@ public final class ForgeEventHandler1201 {
                 updateCeaselessHunt1201(com.zhonz.moreenchantments.common.storage.EntityDataStorage
                         .getData(attacker), attacker.level().getGameTime());
             }
+            // ===== 攻击侧补齐(AttackSideBatch1; 1.21 源 applyAttackerEnchantments 内, 相对顺序同 1.21)=====
+            // 11. 我的海疆标记(写 "zhonz_my_sea_domain_start", 受击易伤由 incomingConditionalFactor 读)
+            AttackSideBatch1.applyMySeaDomainMark(attacker, defender);
+            // 38. 终点倒计时: 命中施加 10 秒倒计时标记(期间所受伤害由 accumulateFinalCountdown 累积)
+            AttackSideBatch1.applyFinalCountdown(attacker, defender);
+            // 39. 将我抹去, 将你也抹去: 击杀目标及 10 格内同类
+            AttackSideBatch1.applyEraseMe(attacker, defender, source);
+            // 47. 剧烈搏动: 生命 <= 50% 时攻击回复 1 生命
+            AttackSideBatch1.applyViolentPulseAttack(attacker);
+            // 50. 新太阳: 攻击点燃目标 3 秒
+            AttackSideBatch1.applyNewSunIgnite(attacker, defender);
 
             event.setAmount(amount);
         }
+        // 38. 终点倒计时: 倒计时期间累积目标所受伤害(1.21 源 applyDefenderEnchantments L982, 护甲后口径)
+        AttackSideBatch1.accumulateFinalCountdown(defender, event.getAmount());
         // 收到伤害通道(round-incoming): 最终受到伤害 = 护甲后伤害 × defender.incoming_damage
         // (易伤>1 减伤<1)。先刷新 tick 常驻减伤/易伤聚合(穿戴+状态, 与 1.21 refreshIncomingAggregate 对称),
         // 再叠加事件条件易伤(冬痕冰霜×1.5 / 惨白标记×1.3), 统一乘后清除。
@@ -170,6 +192,8 @@ public final class ForgeEventHandler1201 {
                 defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
                 new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_tick_aggregate"),
                 1.0);
+        // --- 36→37 舍吾皮肉 → 断汝筋骨: 受击后切换(1.21 源 onLivingDamage.Pre 尾部 L525) ---
+        AttackSideBatch1.tryFleshToBoneBreak(defender);
     }
 
     /** tick 常驻受击减伤/易伤聚合(1.20.1, 与 1.21 refreshIncomingAggregate 判定一致): 穿戴+自身状态可判定项。 */

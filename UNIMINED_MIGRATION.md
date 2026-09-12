@@ -201,6 +201,36 @@ src/main/resources/META-INF/{neoforge.mods.toml,mods.toml}
   非 "neoforge"), 否则报 "neoforge is not installed"
 - 复现命令: 平台目录 `gradlew runServer`(需 run/server/eula.txt + server.properties enable-rcon=true)
 
+## 6.9 代码审计与修复(round-audit, 2 子代理并行)
+审计范围: 1.20.1 两平台全部移植代码 + 1.21 主工程, 对照原始实现逐函数核对。
+
+**核心结论**: **未发现"未附魔却生效"的误触发** —— 两平台全部 tick/事件/mixin 入口均有
+`等级<=0 → return` 守卫, 且守卫用的是对应附魔; 槽位映射(cornered→HEAD/pale→HEAD/rapid→FEET/
+new_sun→LEGS/sorrowful→CHEST/apex→主副手等)逐条与 1.21 一致; 89 附魔 id 三方一致
+(注册/EnchantIds/JSON), mixins.json 与包路径一致。
+
+**已修复缺陷**(commit `6c1e43c`):
+| 缺陷 | 修复 |
+|---|---|
+| neoforge 平台 incoming 事件乘数用加和(未同步 forge 的乘积修复) | 同步 `applyEventMultiplierTemporary` |
+| 受击侧因子缺失(奢侈×1.5/急速 y<0/燃烧黄昏/海疆/先知×2.7/不停狩叠层) | 补入 tick 聚合与事件因子 |
+| 剥壳 recordShellStripRaw 未接线 → 真伤链静默失效 | 补入 onLivingHurt(护甲前记录) |
+| 死亡侧 4 项未接线(血路计数/智能图腾/永劫回归/神圣守护) | onLivingDeath 重构(此前 attacker 非生物即 return) |
+| 血泣只加伤不扣血(白嫖) | 补自伤 10/7/4 |
+| 不停狩叠层无写入 → 加伤/减伤恒 0 | 补 updateCeaselessHunt1201(攻击+受击) |
+| 愚者受击 buff/debuff 未接线 | 补 applyFoolsMaskOnHit |
+| 溅射/剥壳副作用以结算后 amount 为基准(1.21 是结算前) | 改用 preUnified |
+| 永恒屹立 -80% 耐久被丢弃(无坚韧时) | 自行落盘 + cancel; 1.21 同款缺陷一并修 |
+
+**遗留待移植**(子代理并行移植中): 攻击侧 finale/harvest/erase_me/final_countdown/fleeting_grace/
+fleet_footsteps flat/new_sun 点燃/violent_pulse 回血/my_sea_domain mark/flesh→bone 切换;
+tick 侧 tickCooldownsAndCleanup/tickHalo/tickPatience/tickFoolsMask/tickPaleMidnight/
+tickSupremeArt 属性部分/tickCorneredBeast 治疗+50%。
+
+**低优先级已知项**: D15 冬痕首次命中因事件处理器注册顺序吃不到 ×1.5; 节奏(applyRhythm)标志
+写入侧缺失; 耐心依赖 tickPatience(同上); ProjectileWeaponCooldownMixin 无物品类型守卫;
+AttributeAccess1201 按 name 匹配 modifier(跨版本脆弱, 当前可用)。
+
 ## 五、风险与缓解
 - 附魔 JSON 无法跨版本 → 1.20.1 代码注册需重写,工作量≈新实现;建议按"核心 89 个机制清单"驱动逐条移植,并复用 ENCHANTMENTS.md。
 - mixin 字节码目标差异 → 双 mixin 组 + 单测逐版本跑。

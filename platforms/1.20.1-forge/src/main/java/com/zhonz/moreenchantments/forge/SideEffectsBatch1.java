@@ -351,8 +351,9 @@ public final class SideEffectsBatch1 {
      * 1.21 链上副作用为"三叉戟命中把 KEY_MY_SEA_DOMAIN_START 写到目标" + 受击结算读标记放大
      * (+30%→+60%, 60 秒), 属"写标记与同一伤害结算循环内读标记"的 1.21 标记流;
      * 且该附魔 +60% 加成已由 common EventDamageConditions.computeBonusPercent 在 1.20.1 通道结算。
-     * 若需完整复刻标记易伤, 需挂接方在 LivingHurtEvent/LivingDamageEvent 两侧按相同键读写,
-     * 并补 KEY_MY_SEA_DOMAIN_START 超时(1200 tick)清理 —— 记录在 TODO, 不在本批实现。
+     * 【已补齐】标记写入与受击读取已实现: {@link AttackSideBatch1#applyMySeaDomainMark}(写键, 由
+     * ForgeEventHandler1201.onLivingDamage 攻击段调用) + ForgeEventHandler1201.incomingConditionalFactor
+     * (读键, 含 1200 tick 超时清理)。本方法仅保留为文档对照, 不再被调用。
      * 1.21 源: {@code ModEventHandlers.applyMySeaDomainMark(L657)} / applyMySeaDomainVulnerability(L1005)。
      */
     public static void applyMySeaDomainMarkTODOSkip(LivingEntity attacker, LivingEntity defender) {

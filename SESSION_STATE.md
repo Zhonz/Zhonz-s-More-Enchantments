@@ -2,7 +2,36 @@
 
 > 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
 
-## 最新状态(2026-09-13, round-ui:用户反馈的三个显示问题)
+## 最新状态(2026-09-13, round-ui:显示问题修复 + v1.3.2 发布 + 仓库编码事故)
+
+### ⚠️ 事故: GitHub 仓库曾被整体存成 UTF-16(已修复 + 已加门禁)
+- **现象**: `main` 整条分支 25 个文本文件全部是 **UTF-16LE**(`FF FE` BOM + 大量 NUL 字节),
+  git 因此把每个文件当**二进制** → diff/blame 失效、正常 checkout 得到乱码、25 个文件全部无法合并。
+- **来源**: 污染提交(`092dea9` / `5af8f67` / `140fe90`)的 SHA **在本地并不存在** ——
+  即不是本工作区提交的, 无法定位写入者。判断为外部/CI(极可能是 Windows PowerShell 5.1 的
+  `>` 重定向或 `Set-Content` 默认 UTF-16 所致)。用户亦表示"云端我不知道"。
+- **修复**: 逐项核对远端无本地缺失文件后, 用 `--force-with-lease`(带期望远端 SHA, 远端若有他人
+  新提交会拒绝)推入干净 UTF-8 历史; 损坏态保留为本地 tag `backup-remote-broken-utf16` 以便回查。
+- **防复发**: 新增 **`tools/check-remote-encoding.ps1`**(扫描 ref 全部文本文件, 有 NUL/UTF-16 BOM
+  即失败并列出文件), 已接入 `release-v*.ps1`: **push 后立即校验, 不通过即中止发布**。
+  实测: 干净态 282 文件全过; 损坏态精确报出 25 个文件。
+- **教训**: 任何写仓库内容的脚本/工具一律显式无 BOM UTF-8(`UTF8Encoding($false)` 或 `-Encoding utf8`);
+  发布后必须跑一次编码门禁。
+
+### 推送经验(下次直接用)
+- `github.com` 的 DNS 解析到 `20.205.243.166` 常被重置 → 用项目自带 CONNECT 代理绕:
+  `node tools/github_proxy.js <可用IP> <端口>` 然后
+  `git -c http.proxy=http://127.0.0.1:<端口> -c http.sslBackend=openssl -c http.version=HTTP/1.1 push`
+  —— **必须同时加 openssl 后端与 HTTP/1.1**, 否则 schannel 报 "server closed abruptly"。
+- 可用 IP 会漂移, push 常需**多次重试**; 可用 `curl --resolve github.com:443:<ip>` 先探活。
+- `api.github.com` 一般可直连(发布 Release / 上传资产用 curl + token, 不走代理)。
+
+### v1.3.2 已发布
+`https://github.com/Zhonz/Zhonz-s-More-Enchantments/releases/tag/v1.3.2`(3 个平台 jar 齐全)
+- 提交 `98c727d`(63 文件: 敷衍按诅咒计数 + 诅咒红色 + 附魔名颜色 + 受伤倍率常驻 + 版本号 1.3.2)
+- 提交 `8bdafbe`(编码门禁); 远端 main HEAD = `8bdafbe`, 与本地一致
+
+## 上一状态(2026-09-13, round-ui:用户反馈的三个显示问题)
 
 ### ⚠️ 先记一次误判(避免后续再犯)
 用户说"**增伤、乘伤应该出现但没出现**", 我**理解反了**, 把三个通道属性改成 `setSyncable(false)`

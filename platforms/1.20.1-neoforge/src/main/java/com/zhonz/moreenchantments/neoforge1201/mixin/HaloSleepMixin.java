@@ -24,10 +24,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * 1.21.1 NeoForge → 1.20.1 Forge 移植差异:
  * - 注入点 Player.isSleepingLongEnough() 两版均存在(1.20.1 Player 有该方法, 语义同 1.21)。
  * - 附魔等级: 1.21 getEnchantmentLevel(Holder) → 1.20.1 EnchantmentLookup1201.slot(self, HALO, HEAD)。
- * - TODO(tick 侧): "zhonz_halo_sleep_ticks" 计数由 1.21 onPlayerTick 的 tickHalo 维护
- *   (睡觉 +1 至 200 / 起床清零 / 发光 / 睡觉反胃), 该 tick 侧效果在 1.20.1 属 PlayerTick 批
- *   (TickEffectsBatch1 等)范畴, 本 mixin 只移植服务端放行门。若平台 tick 侧未补 tickHalo,
- *   计数恒为 0 → 佩戴者将永远无法跳过夜晚(行为比 1.21 更保守, 待 tick 批接入)。
+ * - tick 侧已接线: "zhonz_halo_sleep_ticks" 计数由 {@link TickSideBatch1#tickHalo} 维护
+ *   (睡觉 +1 至 200 / 起床清零 / 光环发光 / 睡觉反胃), 由 {@link EnchantWiring1201#onPlayerTick}
+ *   调用。本 mixin 只负责服务端放行门(计数由 tick 侧提供)。
  */
 @Mixin(Player.class)
 public abstract class HaloSleepMixin {

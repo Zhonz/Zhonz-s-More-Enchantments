@@ -1558,12 +1558,13 @@ public class ModEventHandlers {
 
     // --- 64. 敷衍: 诅咒, 背包每有一件带此诅咒, 移速/攻速/挖掘/蓄力-20% ---
     private static void tickPerfunctory(Player player, CompoundTag data) {
+        // 数"背包内**带诅咒附魔**的物品数"(每件物品最多计 1 次, 与文档口径一致):
+        // 文档: 背包内每有一个物品带此诅咒, 移速/攻速/挖掘/蓄力 -20%。
+        // 判定用 minecraft:curse 标签(1.21 无 Enchantment.isCurse(); 诅咒色同源该标签, 见 getFullname)。
         int count = 0;
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
             ItemStack stack = player.getInventory().getItem(i);
-            if (!stack.isEmpty() && stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.PERFUNCTORY)) > 0) {
-                count++;
-            }
+            if (!stack.isEmpty() && zhonz$hasCurseEnchant(stack)) count++;
         }
         int last = data.getInt("zhonz_perfunctory_last");
         if (count == last) return;
@@ -1893,6 +1894,19 @@ public class ModEventHandlers {
         // 90/91: 受治疗侧(自私澄澈天光的治疗暴击加成)
         tickSelfishClearSky(player);
         refreshDamageMultiplierAggregate(player);
+    }
+
+    /**
+     * 该物品是否带任意<b>诅咒附魔</b>(用于「敷衍」按诅咒件数扣属性)。
+     *
+     * <p>判定即"本模组的诅咒附魔清单"(与 {@code data/minecraft/tags/enchantment/curse.json}
+     * 保持同步 —— 那三个正是附魔名渲染为红色的附魔)。直接按 id 查比取标签 HolderSet 更省事且等价。
+     * 每件物品最多计 1 次(与文档"每有一个物品带此诅咒"口径一致)。
+     */
+    private static boolean zhonz$hasCurseEnchant(ItemStack stack) {
+        return stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.DIVINE_CURSE)) > 0
+                || stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.SELF_BOUND)) > 0
+                || stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.PERFUNCTORY)) > 0;
     }
 
     // ===================================================================

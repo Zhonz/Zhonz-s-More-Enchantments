@@ -28,6 +28,15 @@ public final class ForgeEventHandler1201 {
     private static final String KEY_CEASELESS_STACKS = "zhonz_ceaseless_stacks";
     private static final String ELITE_TAG = "zhonz_elite";
 
+    /** 41. 节奏: 上次攻击 tick / 已记录的攻击间隔(与 1.21 源 KEY_RHYTHM_LAST_ATTACK / RECORDED_INTERVAL 同值)。 */
+    private static final String KEY_RHYTHM_LAST_ATTACK = "zhonz_rhythm_last_attack";
+    private static final String KEY_RHYTHM_RECORDED_INTERVAL = "zhonz_rhythm_recorded_interval";
+
+    /** 33. 不完整的预知眼: 当前闪避概率 / 上次同步到 Apothic 的值 / 上次战斗 tick(与 1.21 源同值)。 */
+    private static final String KEY_FOREKNOWLEDGE_DODGE = "zhonz_foreknowledge_dodge_prob";
+    private static final String KEY_FOREKNOWLEDGE_LAST_COMBAT = "zhonz_foreknowledge_last_combat";
+    private static final String KEY_FOREKNOWLEDGE_DODGE_APPLIED = "zhonz_foreknowledge_dodge_applied";
+
     private static final EventDamageContext CTX = new EventDamageContext(
             EnchantmentLookup1201.INSTANCE,
             (a, d) -> bloodPathKills(a, d),
@@ -90,6 +99,12 @@ public final class ForgeEventHandler1201 {
                     attacker.getAttribute(ZhonzAttributes1201.DAMAGE_MULTIPLIER.get()),
                     new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "unified_mult_aggregate"),
                     EventDamageConditions.tickMultiplierProduct(CTX, attacker));
+
+            // 41. 节奏: 攻击间隔命中则写 KEY_RHYTHM_HIT_ATTACK 标志。**必须在 computeConditionalMultiplier
+            //     之前** —— 该判定读取标志并清除(common EventDamageConditions), 与 1.21 源同序
+            //     (1.21 applyRhythm 在 applyAttackerEnchantments 内, 先于事件条件乘伤判定)。
+            AttackSideBatch1.applyRhythm(attacker, KEY_RHYTHM_LAST_ATTACK, KEY_RHYTHM_RECORDED_INTERVAL,
+                    KEY_RHYTHM_HIT_ATTACK);
 
             // 事件条件判定
             double eventMult = EventDamageConditions.computeConditionalMultiplier(CTX, attacker, defender);
@@ -183,14 +198,13 @@ public final class ForgeEventHandler1201 {
         double incoming = defender.getAttributeValue(ZhonzAttributes1201.INCOMING_DAMAGE.get());
         amount = UnifiedDamageEngine.settleIncoming(defender.getName().getString(), event.getAmount(), incoming);
         event.setAmount(amount);
-        // 清除事件临时聚合与 tick 聚合(幂等; 下一次伤害事件重算)
+        // 只清事件临时聚合; **不要**重置 tick 常驻聚合 ——
+        // 它由 refreshIncomingAggregate1201 按"穿戴/自身状态"重算, 若在结算后置回 1,
+        // 两次受击之间属性面板就会读到 1(即"数值只在伤害瞬间可见")。
+        // 主工程(1.21.1)同样保留 tick 聚合常驻, 此处对齐。
         UnifiedDamageEngine.setIncomingDamage(
                 defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
                 new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_event_mult"),
-                1.0);
-        UnifiedDamageEngine.setIncomingDamage(
-                defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get()),
-                new net.minecraft.resources.ResourceLocation(CommonConstants1201.MODID, "incoming_tick_aggregate"),
                 1.0);
         // --- 36→37 舍吾皮肉 → 断汝筋骨: 受击后切换(1.21 源 onLivingDamage.Pre 尾部 L525) ---
         AttackSideBatch1.tryFleshToBoneBreak(defender);

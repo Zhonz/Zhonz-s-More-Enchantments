@@ -2,7 +2,103 @@
 
 > 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
 
-## 最新状态(2026-09-12 晚二轮)
+## 最新状态(2026-09-13, round-ui:用户反馈的三个显示问题)
+
+### ⚠️ 先记一次误判(避免后续再犯)
+用户说"**增伤、乘伤应该出现但没出现**", 我**理解反了**, 把三个通道属性改成 `setSyncable(false)`
+(等于彻底隐藏)。实为"该出现却没出现"。**已全部回退**(三个 `ZhonzAttributes*` 文件与 HEAD 一致,
+均 `setSyncable(true)`)。教训: 此类"该不该显示"的反馈必须先确认方向再动手。
+
+### ✅ 增伤 / 乘伤数值常驻(用户需求: 在属性面板能看到实际数值)
+- **根因(已定位并修)**: 1.20.1 平台在 `onLivingDamage` 尾部把 `incoming_tick_aggregate`
+  **重置为 1** → 两次受击之间读回 1, 即"数值只在伤害瞬间存在"。
+  现**只清事件临时聚合** `incoming_event_mult`, tick 常驻聚合保持常驻(与 1.21.1 主工程一致)。
+- **本就常驻、无需改的**:
+  - `bonus_damage`: 各附魔**独立 modifier id**(`bonus_supreme_art`/`bonus_new_sun`/
+    `bonus_cornered_beast`/`bonus_rapid_ascent`/`bonus_sorrowful_red`)在 PlayerTick 每 tick 覆盖写入
+  - `damage_multiplier`: `refreshDamageMultiplierAggregate` 每 tick 写单一聚合 `unified_mult_aggregate`
+  - 三个通道属性保持 `setSyncable(true)`(否则面板根本不列)
+- **设计边界(不修复)**: 事件**条件型**加伤/乘伤(泰坦打精英 ×2、破军目标低血 +30% 等)依赖目标状态,
+  只在命中瞬间以临时 modifier 计入并立即清除 → **不会**常驻显示; 面板反映的是"自身状态可判定"的常驻部分。
+
+### ✅ 附魔名紫色斜体误加(已修)
+lang 里 `§d§o` 被贴到 8 个附魔名上, 按设计**只有 #2「将我抹去, 将你也抹去」(`erase_me_erase_you`)** 该有
+(README/ENCHANTMENTS 明写)。已从 #45 顶点 / #50 新太阳 / #55 于此显圣 / #57 悲伤的红 / #59 永劫回归 /
+#60 奢侈的希望 / #75 唯有命运(共 7 个)移除; **保留末尾 `§r` 复位码**(防名字样式渗入后续描述行);
+en_us 侧移除 #75 的同类问题, 并给 en_us 的 #2 补上紫色斜体(原缺失)。
+
+### ✅ 诅咒附魔无法显示红色(已修)
+根因: **1.21 的诅咒红色不来自 `is_curse` 字段**(该版 `EnchantmentDefinition` 无此字段), 而是
+`Enchantment.getFullname` 里的 `holder.is(EnchantmentTags.CURSE)` → `ChatFormatting.RED`, 否则 GRAY
+(经字节码核实)。项目原先**没有任何 curse 标签** → 三个诅咒附魔一直显示为灰。
+- 主工程: 新增 `data/minecraft/tags/enchantment/curse.json`
+- 1.20.1 双平台: 该版 `getFullname` 按 `Enchantment.isCurse()` 选 RED/GRAY → 新增 `CurseEnchantment`
+  基类覆写 `isCurse()`, 三个附魔改用它注册
+- 覆盖 `divine_curse`(神咒) / `self_bound`(自缚者) / `perfunctory`(敷衍 —— 文档稀有度即"诅咒附魔")
+
+### ✅ 「敷衍」改为按诅咒计数(用户确认后实施, v1.3.2)
+- **问题**: 文档为"背包内每有一个物品带此**诅咒**, 移速/攻速/挖掘/蓄力 -20%", 但三平台实现
+  都在数**带敷衍自己**的物品数(`EnchantIds.PERFUNCTORY`) —— 与文档不符。
+- **修复**: 改为统计"背包内**带诅咒附魔的物品件数**", **每件物品最多计 1 次**。
+  诅咒清单 = `divine_curse` / `self_bound` / `perfunctory`(与 `tags/enchantment/curse.json` 一致)。
+  - 1.21.1 主工程: `zhonz$hasCurseEnchant(ItemStack)`(经 `ModEnchantments.getHolder` 查等级)
+  - 1.20.1 双平台: `TickEffectsBatch1.CURSE_ENCHANTS` 清单 + 现有 `hasEnchant(stack, id)`
+- **版本号**: 1.3.1 → **1.3.2**(`gradle.properties` + 两平台 `build.gradle`)
+
+### ⚠️ 待用户确认(已发现, 未改)
+「敷衍」效果实现与文档不符: 文档"背包内每有一个物品带此**诅咒**, 移速/攻速/挖掘/蓄力 -20%",
+实现却是数**带敷衍自己**的物品 —— **已于 v1.3.2 按文档修正**(见上)。
+
+### 验证
+**三平台 build ✅**; runServer **testall 65/65**、**incomingtest 4/4**(证明受击侧聚合改常驻未影响结算)。
+
+## 上一状态(2026-09-12 深夜, round-close:未完成项收口 + 文档校正)
+- ✅ **1.20.1 双平台交出 4 处真实功能缺口**(此前只存在于注释里的 TODO, 逐项核对后发现是真缺陷)
+  1+2. **节奏(rhythm)写侧缺失** —— 1.20.1 只有读侧 `computeConditionalMultiplier`, 没有任何地方写
+     `zhonz_rhythm_hit_attack` 标志 → **该附魔 ×1.5 永不生效**。现于 `ForgeEventHandler1201.onLivingDamage`
+     内、`computeConditionalMultiplier` **之前**调用新增的 `AttackSideBatch1.applyRhythm`(与 1.21 同序:
+     1.21 在 applyAttackerEnchantments L701 写标志、同事件 L508 读)。
+  3. **爆裂黎明装填无敌缺失** —— `applyExplosiveDawn` 写了 `KEY_EXPLOSIVE_DAWN_RELOADING` 但**没人消费**
+     (标志永久残留)。现补 `TickSideBatch1.tickExplosiveDawn`(装填期抗性提升 V, 未装填则清标志)。
+  4. **不完整的预知眼(#33)整条未移植** —— 现补 `tryForeknowledgeDodge` + `tickIncompleteForeknowledge`:
+     受击闪避 + 兜底分支(1.20.1 用 `dev.shadowsoffire.attributeslib.impl.AttributeEvents.isDodging`)
+     + 脱战概率恢复 + 同步 Apothic `DODGE_CHANCE` + 低概率反胃。
+- ✅ **自定义伤害类型三条转换全部落地**(此前被判定"1.20.1 不可表达", 实为可代码注册)
+  - 新增 `DamageTypes1201`(DeferredRegister DAMAGE_TYPE)+ 同名 JSON 描述
+    (`resources/data/zhonz_more_enchantments/damage_type/{weeping_fire,frost,true_damage}.json`)
+    + 标签 `resources/data/minecraft/tags/damage_type/`(true_damage→bypasses_armor/enchantments/
+    resistance/effects; frost→is_freezing; weeping_fire→is_fire)
+  - `WeepingFireMixin` / `PlayerWeepingFireMixin` 重写为 1.21 等价的三路判定与倍率:
+    哭泣之子→weeping_fire ×1、**雪的伤→frost ×1**、**唯有命运→true_damage ×6**(优先级同 1.21)
+  - 新增 mixin **`ThrownTridentAccessor`**(`@Accessor("tridentItem")`)补上"投掷三叉戟自身附魔"分支
+    —— 1.20.1 只有 protected `getPickupItem()`, 1.21 是 public `getWeaponItem()`
+- ✅ **`/zhonztest incomingtest`(1.21.1 主工程, 新增)** —— 补齐受击侧 `incoming_damage` 数值回归
+  (testall 全为攻击侧)。**实测 4/4 通过**:
+  | 用例 | 条件 | 实测 |
+  |---|---|---|
+  | baseline | 无附魔·满血 | 4/4 伤害,incoming=**1.0** ✅ |
+  | luxurious_full | 奢侈的希望·满血 | 6/4,incoming=**1.5** ✅ |
+  | cornered_low | 困兽之斗·生命≤25% | 2/4,incoming=**0.5** ✅ |
+  | product_low | 困兽(×0.5)+极速攀升(y=-5 → ×0.95) | 1.9/4,incoming=**0.475** ✅ 严格乘积(0.5×0.95), 非加和 |
+  - 实现要点: 真实僵尸(FakePlayer 不吃 hurt)、伤害基准取目标最大生命的 20%(自适应, 保证受击后存活)、
+    低血用例起始生命同为 20%(≤25% 满足困兽条件)、断言"设定生命−剩余生命 == 期望"
+- ✅ **回归全绿(本轮实测)**: testall **65/65**、settest **4/4**、manifesttest **5/5**、incomingtest **4/4**
+- ✅ **注释与文档校正**: 1.20.1 两平台 71 处 TODO 逐条核对, 其中"tick 侧未接线/待 PlayerTick 批补齐/
+  未接线:本类尚未被任何事件订阅调用"等**大段已过时注释**(这些早已落地并接线)已同步为实际状态;
+  剩余 TODO 降为"平台不可表达(保留差异)"明确标注(仅 COOLDOWN_REDUCTION / PROJECTILE_DAMAGE 两项)
+- 验证: **三平台 compile ✅**(main / forge / neoforge) + 主工程 runServer 四项测试全绿
+- 版本号仍 1.3.1(本轮为缺陷修复 + 移植补齐, 未发新版; 如需发布建议递增到 1.3.2)
+  - ⚠️ **注意版本漂移**: GitHub Release **v1.3.1 发布于 2026-09-12T14:41Z**(即本轮之前),
+    **不含本轮任何修复**; 本地重建的 jar 仍标 1.3.1 但内容已不同 → 若要让用户拿到本轮修复,
+    必须**递增版本号(建议 1.3.2)并重新发布**, 切勿直接覆盖 v1.3.1 的资产
+- 产物(本地已重建, 均含本轮新增类与资源):
+  | 平台 | jar | 大小 |
+  |---|---|---|
+  | NeoForge 1.21.1 | `build/libs/zhonz_more_enchantments-1.3.1.jar` | 197.7 KB |
+  | Forge 1.20.1 | `platforms/1.20.1-forge/build/libs/zhonz-more-enchantments-1.20.1-forge-1.3.1.jar` | 187.7 KB |
+  | NeoForge 1.20.1 | `platforms/1.20.1-neoforge/build/libs/zhonz-more-enchantments-1.20.1-neoforge-1.3.1.jar` | 189.9 KB |
+
+## 上一状态(2026-09-12 晚二轮)
 - ✅ **新增附魔 90/91 + 暴击五件套口径重写**(用户口径: 六槽位任意"其他"一件)
   - 90 热烈诚挚希望 `fervent_sincere_hope` / 91 自私澄澈天光 `selfish_clear_sky`(胸甲, 宝藏)
   - 65/66/67 加强档判定从"同时附魔另两件"改为 `EnchantSetPieces.hasOtherPiece`(头盔/胸甲/护腿/靴子/主手/副手,
@@ -84,7 +180,8 @@
 ## 测试栈
 - runServer(专属服务器,`run/` world"新的世界",offline;RCON 25575,密码 zhonz_test_rcon)
 - 日志 `run/logs/debug.log`(DEBUG 配置)/`latest.log`
-- 测试命令: `/zhonztest testall`(63 项攻击侧回归)、`/zhonztest manifesttest`(5 项免死/显圣路径)、
+- 测试命令: `/zhonztest testall`(攻击侧回归)、`/zhonztest manifesttest`(5 项免死/显圣路径)、
+  `/zhonztest settest`(90/91 套装)、**`/zhonztest incomingtest`(受击侧 incoming_damage 4 用例, round-close 新增)**、
   `giveweapon`(按附魔选载体, 三千万转=下界星、慈悲=附魔书、铸成=盾牌)、`equiparmor`、`attack`、`damage`、`info`
 - MaaMCP 曾用于客户端控制,当前未连;窗口"Minecraft NeoForge* 1.21.1"
 
@@ -120,6 +217,7 @@
 - 实测: cornered低血 zombie 受击 40.0×0.5=20.0(IncomingDamage debug 确认)
 - 1.20.1 forge/neoforge 已同步(INCOMING_DAMAGE 注册+挂载+settleIncoming 接入); 三平台 compile ✅
 - testall 63/63 ✅(受击侧数值断言需后续受击测试命令; testall 项全为攻击侧)
+  → **已补(round-close)**: `/zhonztest incomingtest` 4 用例覆盖受击侧 incoming_damage 通道
 
 ## 版本差异要点(迁移到 1.20.1 Forge 时注意)
 - 1.20.1 Forge:无 LivingIncomingDamageEvent/DamageContainer(1.21 NeoForge 伤害管线大改),附魔为代码注册非 1.21 数据驱动;1.21.1 依赖 Mojang mapped 方法签名,mixin 目标随版本不同

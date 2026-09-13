@@ -135,6 +135,11 @@ public class ModTestCommands {
                                 .executes(ModTestCommands::setTest)
                         )
 
+                        // === 收到伤害通道 incoming_damage: 受击侧减伤/易伤数值断言 ===
+                        .then(Commands.literal("incomingtest")
+                                .executes(ModTestCommands::incomingTest)
+                        )
+
                         // === 血路拓成坦途 测试：给主手武器设置指定生物类型的击杀数 ===
                         .then(Commands.literal("bloodpath")
                                 .then(Commands.argument("mobType", StringArgumentType.string())
@@ -1067,5 +1072,174 @@ public class ModTestCommands {
                         finalMobKey, actualCount, bonusPct, weapon.getItem())
         ), true);
         return 1;
+    }
+
+    // ===================================================================
+    // 收到伤害通道 incoming_damage 回归(testall 全为攻击侧, 受击侧此前无自动化覆盖)
+    // ===================================================================
+
+    /**
+     * 收到伤害通道 {@code incoming_damage} 回归测试: 断言"最终受到伤害 = 护甲后伤害 × incoming_damage"。
+     *
+     * <p>语义(用户口径, 见 MIGRATION_PLAN / SESSION_STATE): 受击侧减伤(&lt;1)与易伤(&gt;1)统一聚合到
+     * {@code incoming_damage} 属性, 在所有保护附魔与护甲结算之后乘一次。本测试用真实僵尸(不能用
+     * FakePlayer —— hurt() 直接返回 false), 固定最大生命 100 便于读差值, 用
+     * {@code damageSources().generic()} 施加 40 点伤害。
+     *
+     * <p>四个用例(因子挂在头盔/靴子, 同一只僵尸即可覆盖各状态)。伤害基准取目标
+     * 最大生命的 20%(随实体实际最大生命自适应, 保证受击后存活):
+     * <ol>
+     *   <li>{@code baseline} —— 无附魔, 满血: 基准 ×1.0(反例, 证明通道默认为 1)</li>
+     *   <li>{@code luxurious_full} —— 奢侈的希望(#60)满血: 基准 ×1.5</li>
+     *   <li>{@code cornered_low} —— 困兽之斗(#46)生命 &le; 25%: 基准 ×0.5</li>
+     *   <li>{@code product_low} —— 困兽之斗 + 极速攀升(#52, y&lt;0 且 y&gt;-20): 严格乘积
+     *       0.5 × 1.5 = 0.75(验证聚合是乘积而非加和: 加和会得 1.0 → 与 baseline 同值)。
+     *       注: 不能用"困兽+奢侈"配对 —— 奢侈仅满血生效, 与困兽的低血条件互斥(不会同时成立)。</li>
+     * </ol>
+     */
+    private static int incomingTest(CommandContext<CommandSourceStack> context) {
+        ServerLevel level = context.getSource().getLevel();
+
+        Holder<Enchantment> luxurious = ModEnchantments.getHolderOrNull(ModEnchantments.LUXURIOUS_HOPE);
+        Holder<Enchantment> cornered = ModEnchantments.getHolderOrNull(ModEnchantments.CORNERED_BEAST);
+        Holder<Enchantment> rapid = ModEnchantments.getHolderOrNull(ModEnchantments.RAPID_ASCENT);
+        if (luxurious == null || cornered == null || rapid == null) {
+            context.getSource().sendFailure(Component.literal(
+                    "[IncomingTest] 附魔未注册(luxurious_hope/cornered_beast/rapid_ascent)"));
+            return 0;
+        }
+
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        int passed = 0;
+
+        // 1. baseline: 无任何附魔, 满血
+        String r1 = runIncomingCase(level, null, null, false, 1.0f, 1.0f);
+        boolean ok1 = r1 == null;
+        lines.add((ok1 ? "PASS " : "FAIL ") + "baseline: 无附魔满血 → 期望 ×1.00" + (ok1 ? "" : ", " + r1));
+        if (ok1) passed++;
+
+        // 2. luxurious_hope 满血: ×1.5
+        String r2 = runIncomingCase(level, luxurious, null, false, 1.5f, 1.5f);
+        boolean ok2 = r2 == null;
+        lines.add((ok2 ? "PASS " : "FAIL ") + "luxurious_full: 满血 → 期望 ×1.50" + (ok2 ? "" : ", " + r2));
+        if (ok2) passed++;
+
+        // 3. cornered_beast 低血(≤25%): ×0.5(困兽之斗判定在头盔槽 → 传 helmet 而非 feet)
+        String r3 = runIncomingCase(level, cornered, null, true, 0.5f, 0.5f);
+        boolean ok3 = r3 == null;
+        lines.add((ok3 ? "PASS " : "FAIL ") + "cornered_low: 低血 → 期望 ×0.50" + (ok3 ? "" : ", " + r3));
+        if (ok3) passed++;
+
+        // 4. 困兽之斗(头盔, 低血 ×0.5) + 极速攀升(靴子, y=-5 → ×0.95): 严格乘积 0.475
+        //    用 -5.0 而非贴近 0 的值: 极速攀升的因子是 ×(1 + y/100), y=-0.5 时只有 ×0.995,
+        //    几乎测不出"乘积"语义; y=-5 给出 ×0.95, 且仍在安全高度(不会碰到地形/矿洞)
+        String r4 = runIncomingCase(level, cornered, rapid, true, 0.475f, 0.475f, -5.0);
+        boolean ok4 = r4 == null;
+        lines.add((ok4 ? "PASS " : "FAIL ")
+                + String.format("product_low: 困兽×0.50 + 极速攀升(y=-5)×0.95 → 期望 ×%.3f(乘积, 非加和 1.45)",
+                        0.475f)
+                + (ok4 ? "" : ", " + r4));
+        if (ok4) passed++;
+
+        final int passedFinal = passed;
+        final String report = "IncomingTest: cases=4 passed=" + passedFinal
+                + "\n  " + String.join("\n  ", lines);
+        context.getSource().sendSuccess(() -> Component.literal(report), true);
+        return passedFinal;
+    }
+
+    /**
+     * 单个 incoming 用例。返回 {@code null} = 通过, 否则返回失败描述。
+     *
+     * <p><b>为什么会自己算 base</b>: 用例受击后必须存活, 否则断言无意义(死亡时血量被夹到 0,
+     * 差值恰好等于剩余血量, 会伪装成"通过")。僵尸真实最大生命受多方影响(属性修饰/难度/生成规则),
+     * 因此这里<b>读回真实最大生命</b>, 以它的 20% 作为伤害基准, 保证扣血后必有余量:
+     * <ul>
+     *   <li>满血用例: 起始 = 最大生命, 扣 20% ×因子</li>
+     *   <li>低血用例: 起始 = 最大生命 × 20%(≤25% 满足困兽之斗条件), 扣 20% ×因子(最坏 ×1.5 = 30%)</li>
+     * </ul>
+     *
+     * <p>断言口径: 实际扣血 = "设定生命 − 剩余生命"(而非事件返回值), 以覆盖护甲/吸收等中间环节。
+     */
+    private static String runIncomingCase(ServerLevel level, Holder<Enchantment> helmet,
+                                          Holder<Enchantment> feet, boolean lowHealth,
+                                          float factor, float expectedFactor) {
+        // 默认最高空层(远离地形/流体): 与 y 无关的用例一律用这个位置
+        return runIncomingCase(level, helmet, feet, lowHealth, factor, expectedFactor, 200.0);
+    }
+
+    private static String runIncomingCase(ServerLevel level, Holder<Enchantment> helmet,
+                                          Holder<Enchantment> feet, boolean lowHealth,
+                                          float factor, float expectedFactor, double y) {
+        LivingEntity victim = EntityType.ZOMBIE.create(level);
+        if (victim == null) return "僵尸创建失败";
+        victim.moveTo(0.5, y, 0.5, 0.0f, 0.0f);
+        if (victim instanceof net.minecraft.world.entity.Mob mob) {
+            mob.setNoAi(true);
+            mob.setPersistenceRequired();
+            mob.setCanPickUpLoot(false);
+        }
+        level.addFreshEntity(victim);
+
+        resetVictim(victim);
+        float maxHp = victim.getMaxHealth();
+        if (maxHp <= 0.0f) { victim.discard(); return "最大生命异常: " + maxHp; }
+        // 伤害基准 = 最大生命 20%(低血用例起始也是 20%, 最坏 ×1.5 = 扣 30% → 必存活)
+        float base = maxHp * 0.20f;
+        float expected = base * expectedFactor;
+        float startHealth = lowHealth ? maxHp * 0.20f : maxHp;
+        victim.setHealth(startHealth);
+
+        if (helmet != null) {
+            ItemStack h = new ItemStack(Items.DIAMOND_HELMET);
+            h.enchant(helmet, 1);
+            victim.setItemSlot(EquipmentSlot.HEAD, h);
+        }
+        if (feet != null) {
+            ItemStack b = new ItemStack(Items.DIAMOND_BOOTS);
+            b.enchant(feet, 1);
+            victim.setItemSlot(EquipmentSlot.FEET, b);
+        }
+
+        // 位置就位(极速攀升需要 y<0): 直接设定坐标, 不依赖地形/坠落
+        victim.teleportTo(0.5, y, 0.5);
+        victim.setDeltaMovement(0.0, 0.0, 0.0);
+
+        // 前置条件: 受害者必须存活且生命比例符合用例意图, 否则断言无意义(直接报错而非静默失败)
+        if (!victim.isAlive()) { victim.discard(); return "受害者就位前已死亡"; }
+        float preHealth = victim.getHealth();
+        LOGGER.info("[IncomingTest] pre: y={} x={} z={} health={}/{} lowHealth={} helmet={} feet={}",
+                victim.getY(), victim.getX(), victim.getZ(), preHealth, maxHp, lowHealth,
+                helmet != null, feet != null);
+        if (lowHealth && preHealth > maxHp * 0.25f) {
+            victim.discard();
+            return String.format("前置条件不满足: 低血用例生命 %.2f > 25%%(%.2f)", preHealth, maxHp * 0.25f);
+        }
+        if (!lowHealth && preHealth < maxHp - 0.5f) {
+            victim.discard();
+            return String.format("前置条件不满足: 满血用例生命 %.2f != 最大 %.2f", preHealth, maxHp);
+        }
+
+        victim.invulnerableTime = 0;
+        victim.hurtTime = 0;
+        victim.setRemainingFireTicks(0);
+        victim.hurt(level.damageSources().generic(), base);
+        float after = victim.getHealth();
+        float dealt = preHealth - after;
+        double incomingAttr = victim.getAttributeValue(
+                com.zhonz.moreenchantments.attribute.ZhonzAttributes.INCOMING_DAMAGE);
+        LOGGER.info("[IncomingTest] y={} maxHp={} base={} lowHealth={} before={} after={} dealt={} expected={} incomingAttr={}",
+                y, maxHp, base, lowHealth, preHealth, after, dealt, expected, incomingAttr);
+        victim.discard();
+
+        if (after <= 0.0f) {
+            return String.format("目标被击杀(maxHp=%.1f base=%.2f, 实际扣血 %.2f, 期望 %.2f)",
+                    maxHp, base, dealt, expected);
+        }
+        if (Math.abs(dealt - expected) > 0.05f) {
+            return String.format("实际扣血 %.2f, 期望 %.2f (base=%.2f, incoming=%.4f, y=%.1f)",
+                    dealt, expected, base, incomingAttr, y);
+        }
+        return null;
     }
 }

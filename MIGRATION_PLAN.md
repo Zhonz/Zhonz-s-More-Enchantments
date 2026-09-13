@@ -97,6 +97,22 @@
 - **flat 绝对加伤通道已落地**: flat_damage 属性(绝对量, 结算最后 +flat, 不受 %/× 缩放);
   fleet_footsteps / fleeting_grace 已迁入; 其余攻击侧乘法/百分比全部经 bonus/mult/flat 通道, 链上无手写乘算。
 
+## round-close 收口(2026-09-12 深夜):迁移计划全部关闭
+
+本文件记录的攻击侧增伤迁移**已全部完成**; round-close 另把"文档中残留的待办"逐条对代码复核, 结果:
+
+- ✅ **攻击侧手写乘法 = 0**: 全部经 bonus(加伤%) / multiplier(乘伤×) / flat(绝对量) 三通道 +
+  事件临时 modifier, 链上无手写乘算(逐函数 grep 复核)。
+- ✅ **受击侧 incoming_damage 通道**: tick 常驻聚合 + 事件条件易伤, 护甲后统一乘一次。
+- ✅ **新增回归**: `/zhonztest incomingtest` 覆盖受击侧 4 用例(受击侧此前无自动化, 这是本文件
+  进度段末尾"testall 全为攻击侧"缺口的收口)。
+- ✅ **1.20.1 平台":不可表达"重新评估**: 早期把 frost/true_damage 判为"1.20.1 无 damage_type 构造入口"
+  —— **该判断有误**。1.20.1 同样有 damage_type 注册表, 只是需**代码注册 + 同名 JSON 描述 + 标签**;
+  round-close 已落地三条转换(`DamageTypes1201` + `WeepingFireMixin` 三路判定), 详见
+  `ENCHANTMENTS.md` 八章 8.2。
+- ⚠️ **真实不可表达只剩 2 项**: `COOLDOWN_REDUCTION`(神咒冷却减半)与 `PROJECTILE_DAMAGE`
+  —— 1.20.1 Apothic 1.3.7 经类文件常量池核对确无这两个字段。
+
 ## 待问清单 → 已答(用户官方口径, 2026-09 洗澡后)
 - Q1:数值 <1 的乘数(liberator 0.1~20 / fools_mask 0.01~1)→ **乘伤**,乘伤属性允许 <1(减伤),不 clamp。
 - Q2:weeping_child"自身燃烧 ×3"、lonely_noon ×mult 等 ×N 文案 → **乘伤**。

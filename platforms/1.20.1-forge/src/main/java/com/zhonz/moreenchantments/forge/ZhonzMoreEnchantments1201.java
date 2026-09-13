@@ -27,6 +27,9 @@ public class ZhonzMoreEnchantments1201 {
         ZhonzAttributes1201.ATTRIBUTES.register(modBus);
         modBus.addListener(ZhonzMoreEnchantments1201::addAttributesToAllLiving);
 
+        // 自定义伤害类型注册(weeping_fire / frost / true_damage; 对应 1.21 的 data/damage_type)
+        DamageTypes1201.DAMAGE_TYPES.register(modBus);
+
         // 附魔代码注册(1.20.1 为代码注册, 见 ModEnchantments1201)
         ModEnchantments1201.ENCHANTMENTS.register(modBus);
 

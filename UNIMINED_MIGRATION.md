@@ -167,9 +167,21 @@ src/main/resources/META-INF/{neoforge.mods.toml,mods.toml}
      RegistryObject.get()); ForgeMod.STEP_HEIGHT_ADDITION/ENTITY_REACH/BLOCK_REACH; UUID modifier;
      compileOnly Apothic 1.3.7(仅编译期)
   5. 产物: forge jar 24→122KB(111 class 含移植类); **compile BUILD SUCCESSFUL(两平台)**
-- **TODO(1.20.1 不可表达/待补, 各文件 javadoc)**: divine_curse 冷却翻倍(无 COOLDOWN_REDUCTION);
-  my_sea_domain 标记易伤流; explosive_dawn 装填 tick; weeping_child 自定义 damage_type(weeping/frost/true);
-  mercy_equal 信标绑定; 雪的伤/unyielding 攻击侧伤害类型转换; 若干 tick 维护(标记过期清理等)
+- **1.20.1 待补项现状(round-close 复核, 2026-09-12 深夜)**: 早期 round 记录的一批"待补 TODO"
+  经逐项核对**绝大部分已在此后几轮落地**, 本次复核把注释同步为实际状态, 并补掉 3 处真实缺口:
+  | 项 | 状态 |
+  |---|---|
+  | my_sea_domain 标记易伤流 | ✅ 已落地(`AttackSideBatch1.applyMySeaDomainMark` 写 + `incomingConditionalFactor` 读, 含 1200 tick 过期) |
+  | explosive_dawn 装填 | ✅ **本次补齐**(`TickSideBatch1.tickExplosiveDawn` 消费标志 → 装填期抗性 V; 此前标志写了没人读 → 永久残留) |
+  | tick 维护(tickCooldownsAndCleanup / tickHalo / tickFoolsMask / tickPaleMidnight / tickSupremeArt / tickCorneredBeast / tickPatience) | ✅ 已落地于 `TickSideBatch1`, 由 `EnchantWiring1201.onPlayerTick` 调用(早期注释"未接线"已过时) |
+  | 节奏 rhythm 标志写入 | ✅ **本次补齐**(1.20.1 此前只有读侧 `computeConditionalMultiplier`, **写侧缺失 → ×1.5 永不生效**; 现于 `onLivingDamage` 内、`computeConditionalMultiplier` **之前**调用 `applyRhythm`, 与 1.21 同序) |
+  | 不完整的预知眼闪避(#33) | ✅ **本次补齐**(`tryForeknowledgeDodge` + `tickIncompleteForeknowledge`; 兜底分支用 1.20.1 的 `dev.shadowsoffire.attributeslib.impl.AttributeEvents.isDodging`) |
+  | 投掷三叉戟"哭泣之子"分支 | ✅ **本次补齐**(新增 mixin `ThrownTridentAccessor` 读 private `tridentItem`, 等价 1.21 `getWeaponItem()`) |
+  | divine_curse 冷却翻倍 | ❌ **平台不可表达**: attributeslib 1.3.7 经类文件核对确无 `COOLDOWN_REDUCTION`(亦无 `PROJECTILE_DAMAGE`) |
+  | weeping_fire / frost / true_damage 自定义伤害类型 | ❌ **平台不可表达**: 1.21 为数据驱动 damage_type, 1.20.1 无数据注册入口, 现用原版标签近似(IS_FIRE / IS_FREEZING) |
+  | mercy_equal 信标绑定 | ⚠️ 部分: 1.20.1 无 DataComponents 化信标数据 API, 走 `BeaconMercyMixin` 等价路径 |
+  > 说明: "不可表达"两项属跨版本数据层根本差异, 已在 `ENCHANTMENTS.md` 七章与各文件 javadoc 标注为**保留差异**,
+  > 不再列为待办; 其余"待补"项均已落地, 旧注释已同步。
 - **已完成(round 9, 16 mixin 移植)**: 2 并行组移植全部 1.21 mixin 到 1.20.1 Forge(forge.mixin 包):
   组1(9): ItemStackDurability(hurtAndBreak Consumer 重载)/BlockBreak/CrossbowCharge(单参 getUseDuration)/
     ProjectileWeaponCooldown/PlayerShieldBlock(disableShield(boolean))/PlayerFoodEffect+ThePure(canBeAffected)/
@@ -181,15 +193,17 @@ src/main/resources/META-INF/{neoforge.mods.toml,mods.toml}
 - **验证边界(重要)**: 1.20.1 dev 环境 attributeslib(Apothic 1.3.7)无 dev-remap 变体 → 运行时
   mixin 注入验证需真实客户端(生产 mods 双装); dev 冒烟上限 = 壳+效果代码启动(已达成 Done 25.9s)。
   主工程(1.21.1 NeoForge)testall 63/63 全程保持(所有跨版本重构零回归)
-- **矩阵最终交付**: NeoForge 1.21.1(89 附魔完整 + testall 63/63)✅ / Forge 1.20.1(89 注册+效果 3 批
-  +16 mixin+接线, compile+jar)✅ / NeoForge 1.20.1(同 forge 同步, compile)✅
-- **剩余**: 数值验证(人工/生产 jar); mixin 1.20.1 重写; 剩余 tick 维护补全; neoforge jar 冒烟
+- **矩阵最终交付(更新至 v1.3.1 / round-close)**: NeoForge 1.21.1(**91 附魔**完整 + testall **65/65** +
+  settest 4/4 + manifesttest 5/5 + incomingtest)✅ / Forge 1.20.1(**91 注册**+效果 3 批
+  +17 mixin(含新增 ThrownTridentAccessor)+接线, compile+jar)✅ / NeoForge 1.20.1(同 forge 同步, compile)✅
+- **剩余(round-close 后)**: 1.20.1 侧数值验证(需生产 mods 双装 / 真实客户端跑 mixin 注入);
+  UniMined 骨架与 `ModEventHandlers.java`(约 3000 行单文件)拆分 —— 属阶段三, 未开工
 
 ## 6.8 三平台本地服务端实测(round-verify, 全部通过)
 在本地服务端实机运行三个平台并验证核心功能(不破坏项目结构):
 | 平台 | 启动 | 附魔注册 | incoming 通道 | 攻击乘伤通道 |
 |---|---|---|---|---|
-| NeoForge 1.21.1(主工程) | runServer ✅ | 89 附魔(/zhonztest) | ✅ | ✅ testall **63/63** |
+| NeoForge 1.21.1(主工程) | runServer ✅ | 91 附魔(/zhonztest) | ✅ | ✅ testall **65/65** |
 | Forge 1.20.1 | `Done (27.1s)` ✅ | ✅ 装备 NBT 确认 | ✅ **打 8 扣 4**(×0.5 减伤) | ✅ **打 8 扣 48**(bone_break ×6) |
 | NeoForge 1.20.1 | ✅ | ✅ | ✅ **打 8 扣 4** | ✅ **打 8 扣 48** |
 
@@ -227,9 +241,41 @@ fleet_footsteps flat/new_sun 点燃/violent_pulse 回血/my_sea_domain mark/fles
 tick 侧 tickCooldownsAndCleanup/tickHalo/tickPatience/tickFoolsMask/tickPaleMidnight/
 tickSupremeArt 属性部分/tickCorneredBeast 治疗+50%。
 
-**低优先级已知项**: D15 冬痕首次命中因事件处理器注册顺序吃不到 ×1.5; 节奏(applyRhythm)标志
-写入侧缺失; 耐心依赖 tickPatience(同上); ProjectileWeaponCooldownMixin 无物品类型守卫;
-AttributeAccess1201 按 name 匹配 modifier(跨版本脆弱, 当前可用)。
+**遗留待移植 — 已全部关闭(round-close 复核)**: 攻击侧 finale/harvest/erase_me/final_countdown/fleeting_grace/
+fleet_footsteps flat/new_sun 点燃/violent_pulse 回血/my_sea_domain mark/flesh→bone 切换 与
+tick 侧 tickCooldownsAndCleanup/tickHalo/tickPatience/tickFoolsMask/tickPaleMidnight/
+tickSupremeArt 属性部分/tickCorneredBeast 治疗+50% —— 逐项 grep 复核均已在两平台实现并接线;
+本次另补 explosive_dawn 装填 tick、节奏写侧、预知眼闪避、投掷三叉戟分支(见上表)。
+
+**低优先级已知项(round-close 复核后)**:
+- ✅ 节奏(applyRhythm)标志写入侧缺失 → **本次已补**(A 类真实缺陷)。
+- ✅ 耐心/节奏依赖的 tickPatience = 已落地(`TickSideBatch1.tickPatience`, 已接线)。
+- ✅ ProjectileWeaponCooldownMixin 物品类型守卫 → 复核确认**无需守卫**: 该 mixin 已用
+  `@Mixin({BowItem, TridentItem, CrossbowItem})` 精确限定三个类, 只注入 `getUseDuration(ItemStack)`,
+  不存在"误注入其它物品"的路径(原注释是对早期 `@Mixin(Item.class)` 版本的残留描述)。
+- ⚠️ D15 冬痕首次命中吃不到 ×1.5: 起因是 `WeepingFireMixin` 与 `NewEnchantsBatch1` 的注册顺序。
+  现顺序为 攻击侧批先注册(见 `EnchantWiring1201.register` 注释), 冬痕标记由 `onLivingDamage`(护甲后)
+  写入, 而同一次命中的 ×1.5 在 `incomingConditionalFactor` 读取 —— 首次命中仍可能读不到标记,
+  属"标记在伤害结算之后才写入"的固有相位差, **保留为已知差异**(1.21 靠同相位标记流规避)。
+- ⚠️ AttributeAccess1201 按 name 匹配 modifier: 1.20.1 无"按 ResourceLocation 移除", 实现用
+  `UUID.nameUUIDFromBytes("zhonz:"+path)` 稳定派生 + name 匹配; 当前可用, 跨版本重构时需复查。
+
+## 6.10 收到伤害通道回归测试(round-close 新增, 实测 4/4 ✅)
+
+`/zhonztest incomingtest`(1.21.1 主工程)—— 补齐 testall(全为攻击侧)缺失的**受击侧数值断言**。
+**实测 4/4 通过**(伤害基准 = 目标最大生命的 20%, 随实体自适应):
+| 用例 | 条件 | 期望(倍率) | 实测(倍率) |
+|---|---|---|---|
+| `baseline` | 无附魔·满血 | ×1.00 | **×1.00** ✅ |
+| `luxurious_full` | 奢侈的希望(#60)·满血 | ×1.50 | **×1.50** ✅ |
+| `cornered_low` | 困兽之斗(#46)·生命 ≤25% | ×0.50 | **×0.50** ✅ |
+| `product_low` | 困兽(×0.5)+ 极速攀升(y=-5 → ×0.95) | ×0.475 | **×0.475** ✅ |
+
+`product_low` 同时锁定"**严格乘积**"语义: 0.5 × 0.95 = 0.475(若聚合退化为加和会得到 1.45)。
+
+实现要点: 用**真实僵尸**(FakePlayer 不吃 hurt; 且死亡时血量被夹到 0 会让断言假通过 —— 故伤害基准
+取最大生命 20% 保证存活)、低血用例起始生命同为 20%、断言"设定生命 − 剩余生命 == 期望"
+(而非事件返回值, 以覆盖中间环节)。
 
 ## 五、风险与缓解
 - 附魔 JSON 无法跨版本 → 1.20.1 代码注册需重写,工作量≈新实现;建议按"核心 89 个机制清单"驱动逐条移植,并复用 ENCHANTMENTS.md。

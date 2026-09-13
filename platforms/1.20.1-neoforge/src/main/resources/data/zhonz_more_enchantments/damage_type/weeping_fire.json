@@ -1,0 +1,7 @@
+{
+  "message_id": "weeping_fire",
+  "exhaustion": 0.1,
+  "scaling": "never",
+  "effects": "hurt",
+  "death_message_type": "default"
+}

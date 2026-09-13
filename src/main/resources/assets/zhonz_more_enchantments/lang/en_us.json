@@ -76,7 +76,7 @@
 
     "enchantment.zhonz_more_enchantments.final_countdown": "Final Countdown",
     "enchantment.zhonz_more_enchantments.final_countdown.desc": "Applies a countdown buff recording damage taken; on expiry deals 10% of the recorded damage",
-    "enchantment.zhonz_more_enchantments.erase_me_erase_you": "Erase Me, Erase You",
+    "enchantment.zhonz_more_enchantments.erase_me_erase_you": "§d§oErase Me, Erase You§r",
     "enchantment.zhonz_more_enchantments.erase_me_erase_you.desc": "Attacks instantly kill the target and all creatures of the same type",
     "enchantment.zhonz_more_enchantments.fleet_footsteps": "Fleet of Foot, Keen of Ear",
     "enchantment.zhonz_more_enchantments.fleet_footsteps.desc": "+50% movement speed, +0.5 step height; next attack deals extra 10% of the last attack",
@@ -151,7 +151,7 @@
     "enchantment.zhonz_more_enchantments.snow_wound.desc": "Attacks deal frost damage; while the wielder is in rain (treated as snow), frost crit damage +50%; frost damage +50% with Snow's Sorrow",
     "enchantment.zhonz_more_enchantments.snow_sorrow": "Snow's Sorrow",
     "enchantment.zhonz_more_enchantments.snow_sorrow.desc": "Attacks apply Winter's Mark (powder snow at the foe's feet, +50% frost damage taken); with Snow's Wound, rain begins while a marked foe exists",
-    "enchantment.zhonz_more_enchantments.unyielding_fate": "§d§o\"Fate Alone — I Shall Never Yield, Never!\"§r",
+    "enchantment.zhonz_more_enchantments.unyielding_fate": "\"Fate Alone — I Shall Never Yield, Never!\"§r",
     "enchantment.zhonz_more_enchantments.unyielding_fate.desc": "Gear is unbreakable; HP never drops below 1; your attacks become True Damage dealing +500%",
     "enchantment.zhonz_more_enchantments.titan": "Titan",
     "enchantment.zhonz_more_enchantments.titan.desc": "Dealing damage to elites and bosses triggers an extra hit of equal damage",

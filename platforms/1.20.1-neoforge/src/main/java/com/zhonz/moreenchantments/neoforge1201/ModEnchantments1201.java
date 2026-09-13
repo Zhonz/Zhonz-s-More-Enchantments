@@ -78,7 +78,7 @@ public final class ModEnchantments1201 {
                     new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
                             EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
     public static final RegistryObject<Enchantment> DIVINE_CURSE = ENCHANTMENTS.register("divine_curse",
-            () -> new Enchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.BREAKABLE,
+            () -> new CurseEnchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.BREAKABLE,
                     new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
                             EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
     public static final RegistryObject<Enchantment> DIVINE_PROTECTION = ENCHANTMENTS.register("divine_protection",
@@ -242,7 +242,7 @@ public final class ModEnchantments1201 {
                     new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
                             EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
     public static final RegistryObject<Enchantment> PERFUNCTORY = ENCHANTMENTS.register("perfunctory",
-            () -> new Enchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.BREAKABLE,
+            () -> new CurseEnchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.BREAKABLE,
                     new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
                             EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
     public static final RegistryObject<Enchantment> PHOTOPHILE = ENCHANTMENTS.register("photophile",
@@ -282,7 +282,7 @@ public final class ModEnchantments1201 {
                     new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
                             EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
     public static final RegistryObject<Enchantment> SELF_BOUND = ENCHANTMENTS.register("self_bound",
-            () -> new Enchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.ARMOR_LEGS,
+            () -> new CurseEnchantment(Enchantment.Rarity.COMMON, EnchantmentCategory.ARMOR_LEGS,
                     new EquipmentSlot[]{EquipmentSlot.MAINHAND, EquipmentSlot.HEAD,
                             EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {});
     public static final RegistryObject<Enchantment> SELF_DOUBT = ENCHANTMENTS.register("self_doubt",

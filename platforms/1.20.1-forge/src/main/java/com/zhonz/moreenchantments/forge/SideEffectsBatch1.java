@@ -58,19 +58,22 @@ import java.util.UUID;
  *       ForgeEventHandler1201 结算, 本批只移植链上"非纯属性"副作用, 不重复移植加成。</li>
  * </ul>
  *
- * TODO 清单(无法精确移植/依赖外部注入的部分, 均在函数注释中标注):
+ * <b>移植状态(round 9 起陆续补齐, 现全项已落地)</b>:
  * <ol>
- *   <li>my_sea_domain(11): 1.21 中"三叉戟命中写 KEY_MY_SEA_DOMAIN_START 标记 + 受击方读标记放大伤害"
- *       依赖 1.21 事件链内"标记流"(写标记与读标记在同一伤害结算循环); 1.20.1 事件链分相位,
- *       且 +60% 加成已由 common computeBonusPercent 覆盖 —— 标记放大留 TODO, 见 {@link #applyMySeaDomainMarkTODOSkip}。</li>
- *   <li>explosive_dawn(9): 弩溅射可移植(LivingDamageEvent 内源为持弩 LivingEntity), 但
- *       KEY_EXPLOSIVE_DAWN_RELOADING 标志由 1.21 tickExplosiveDawn(玩家 tick)"装填中"消费 ——
- *       tick 侧未在本批移植, 见 {@link #applyExplosiveDawn} 注释。</li>
- *   <li>weeping_child 自定义伤害类型 weeping_fire / frost / true_damage(1.21 数据驱动 damage_type):
- *       1.20.1 需自建 DamageSource+data JSON, 属跨版本数据层工作 —— 不属本批, 见脆弱点注释。</li>
- *   <li>tick 侧维护(标记过期清理 tickCooldownsAndCleanup、flipping_coin 死亡重置、fools_mask 幸运翻转、
- *       burning_dusk/pale_midnight 定时过期、explosive_dawn 装填恢复)均在 1.21 onPlayerTick 中,
- *       需后续批在 1.20.1 TickEvent.PlayerTickEvent 内补, 本批仅提供事件内行为。</li>
+ *   <li>my_sea_domain(11): <b>已补齐</b> —— 标记写入 {@link AttackSideBatch1#applyMySeaDomainMark},
+ *       受击读取 ForgeEventHandler1201.incomingConditionalFactor(含 1200 tick 超时清理);
+ *       +60% 加成由 common computeBonusPercent 结算。{@link #applyMySeaDomainMarkTODOSkip}
+ *       仅保留为文档对照, 不再被调用。</li>
+ *   <li>explosive_dawn(9): <b>已补齐</b> —— 装填期无敌由
+ *       {@link TickSideBatch1#tickExplosiveDawn} 消费 KEY_EXPLOSIVE_DAWN_RELOADING。</li>
+ *   <li>weeping_child 自定义伤害类型 weeping_fire / frost / true_damage:
+ *       <b>1.20.1 平台不可表达(保留差异)</b> —— 1.21 为数据驱动 damage_type(datapack JSON),
+ *       1.20.1 无数据注册入口, 现用原版等价标签近似
+ *       (IS_FREEZING 代 frost、IS_FIRE 代 weeping_fire), 见 WeepingFireMixin 脆弱点注释。</li>
+ *   <li>tick 侧维护(标记过期清理 tickCooldownsAndCleanup、flipping_coin 死亡重置、
+ *       fools_mask 幸运翻转、burning_dusk/pale_midnight 定时过期、explosive_dawn 装填恢复):
+ *       <b>已补齐</b> —— 全部位于 {@link TickSideBatch1}, 由
+ *       {@link EnchantWiring1201#onPlayerTick} 统一调用。</li>
  * </ol>
  */
 public final class SideEffectsBatch1 {
@@ -212,8 +215,8 @@ public final class SideEffectsBatch1 {
      * 目标≤3 层: 虚弱 30 秒 + MAX_HEALTH -层数。
      * (纯属性加伤未在链上; 叠层计数与 MAX_HEALTH modifier 均为 1.21 语义直移。)
      * 1.21 源: {@code ModEventHandlers.applyFlippingCoin(L793)}。
-     * TODO(tick 侧): 1.21 tickCooldownsAndCleanup 在玩家死亡/重生时移除
-     * KEY_FLIPPING_COIN_ATTACK_STACKS 及 MAX_HEALTH modifier, 1.20.1 需在 PlayerTick 批补齐。
+     * tick 侧(玩家死亡/重生时移除 KEY_FLIPPING_COIN_ATTACK_STACKS 及 MAX_HEALTH modifier)
+     * 已由 {@link TickSideBatch1#tickCooldownsAndCleanup} 补齐。
      */
     public static void applyFlippingCoin(LivingEntity attacker, LivingEntity defender) {
         if (EnchantmentLookup1201.INSTANCE.mainHand(attacker, EnchantIds.FLIPPING_COIN) <= 0) return;
@@ -321,9 +324,9 @@ public final class SideEffectsBatch1 {
      * 每波 = 本次伤害 ×4 ×(1 - 距离/波半径), 并打"装填中"标记。
      *
      * 1.21 源: {@code ModEventHandlers.applyExplosiveDawn(L737)}。
-     * TODO: KEY_EXPLOSIVE_DAWN_RELOADING 的消费与恢复由 1.21 tickExplosiveDawn(玩家 tick)
-     * 完成(装填中禁止再次触发/恢复装填), 属 tick 侧 —— 1.20.1 需后续 PlayerTick 批补齐;
-     * 本方法仅复刻溅射 + 写标记两处事件内行为。若 1.20.1 弩命中链无法保证 source.getEntity()
+     * KEY_EXPLOSIVE_DAWN_RELOADING 的消费已由 {@link TickSideBatch1#tickExplosiveDawn}
+     * (玩家 tick)补齐 —— 装填期给抗性提升 V, 未装填则清除标志。
+     * 本方法负责溅射 + 写标记两处事件内行为。若 1.20.1 弩命中链无法保证 source.getEntity()
      * 为主手持弩者(箭矢为主手物), 则该触发点由挂接方决定是否保留。
      */
     public static void applyExplosiveDawn(LivingEntity attacker, LivingEntity defender, DamageSource source,
@@ -349,7 +352,7 @@ public final class SideEffectsBatch1 {
     }
 
     /**
-     * 11. 我的海疆(My Sea Domain)—— 仅标记项, TODO(不移植):
+     * 11. 我的海疆(My Sea Domain)—— <b>已补齐</b>(本方法保留为文档对照):
      * 1.21 链上副作用为"三叉戟命中把 KEY_MY_SEA_DOMAIN_START 写到目标" + 受击结算读标记放大
      * (+30%→+60%, 60 秒), 属"写标记与同一伤害结算循环内读标记"的 1.21 标记流;
      * 且该附魔 +60% 加成已由 common EventDamageConditions.computeBonusPercent 在 1.20.1 通道结算。
@@ -359,15 +362,15 @@ public final class SideEffectsBatch1 {
      * 1.21 源: {@code ModEventHandlers.applyMySeaDomainMark(L657)} / applyMySeaDomainVulnerability(L1005)。
      */
     public static void applyMySeaDomainMarkTODOSkip(LivingEntity attacker, LivingEntity defender) {
-        // TODO: 见类 javadoc —— 依赖 1.21 标记流, 1.20.1 待定
+        // 空实现保留仅为文档对照: 标记流已由 AttackSideBatch1.applyMySeaDomainMark 落地, 本方法不再被调用。
     }
 
     /**
      * 43(攻击侧). 燃烧的黄昏(Burning Dusk): 目标在燃烧时叠加火焰易伤 +10%
      * (同持孤独的正午 → +20%, 无上限), 刷新 10 秒窗口(200 tick)。
      * 1.21 源: {@code ModEventHandlers.applyBurningDusk(L1169)}。
-     * TODO(tick 侧): 窗口过期清理(KEY_BURNING_DUSK_PCT/UNTIL)在 1.21 tickCooldownsAndCleanup,
-     * 1.20.1 需 PlayerTick 批补齐; 非玩家目标过期可另在受击时惰性清理(见 applyBurningDuskVulnerability)。
+     * 窗口过期清理(KEY_BURNING_DUSK_PCT/UNTIL)已由 {@link TickSideBatch1#tickCooldownsAndCleanup}
+     * 在玩家 tick 补齐; 非玩家目标过期另在受击时惰性清理(见 applyBurningDuskVulnerability)。
      */
     public static void applyBurningDusk(LivingEntity attacker, LivingEntity defender) {
         if (EnchantmentLookup1201.INSTANCE.mainHand(attacker, EnchantIds.BURNING_DUSK) <= 0) return;
@@ -388,7 +391,7 @@ public final class SideEffectsBatch1 {
      * 时放大 ×(1+pct)。
      * 1.20.1 适配: LivingIncomingDamageEvent(1.21)→ LivingHurtEvent(1.20.1, 护甲前),
      * 以"返回放大后 amount"方式让挂接方 setAmount。
-     * TODO: 1.21 另检查自定义 weeping_fire damage_type(1.21 数据驱动, source.is(WEEPING_FIRE));
+     * 【平台差异·保留】1.21 另检查自定义 weeping_fire damage_type(1.21 数据驱动, source.is(WEEPING_FIRE));
      * 1.20.1 无该 damage_type 数据, 哭泣之火相关分支不移植。
      * 1.21 源: {@code ModEventHandlers.applyBurningDuskVulnerability(L1183)}。
      */
@@ -460,7 +463,7 @@ public final class SideEffectsBatch1 {
      * 说明: 1.21 该函数用 EntityDataStorage.getData(弱引用表), 而幸运标志由 tickFoolsMask
      * 写进玩家 persistent data —— 对玩家为不一致; 本移植统一用 getEntityData
      * (玩家 persistent / 非玩家弱表), 与写入侧一致。
-     * TODO(tick 侧): 幸运翻转(KEY_FOOLS_MASK_CHANGE_TICK)在 1.21 tickFoolsMask, 1.20.1 需 PlayerTick 批补齐。
+     * 幸运翻转(KEY_FOOLS_MASK_CHANGE_TICK)已由 {@link TickSideBatch1#tickFoolsMask} 在玩家 tick 补齐。
      */
     public static void applyFoolsMaskSideEffects(LivingEntity attacker, LivingEntity defender) {
         if (EnchantmentLookup1201.INSTANCE.slot(attacker, EnchantIds.FOOLS_MASK, EquipmentSlot.HEAD) <= 0) return;
@@ -625,7 +628,8 @@ public final class SideEffectsBatch1 {
      * 永劫回归(Return From Hell, 任意槽位): 死亡时复活满血 + 清除效果 + 抗火/再生 15 秒,
      * 鞋子耐久减半, 冷却 6000 tick(5 分钟, 存 KEY_RETURN_FROM_HELL_CD)。
      * 返回 true = 已触发(调用方 return)。
-     * TODO(tick 侧): 冷却倒计时递减(tickCooldown)在 1.21 PlayerTick, 1.20.1 需 PlayerTick 批补齐。
+     * 冷却倒计时递减(tickCooldown)已由 {@link TickSideBatch1#tickCooldownsAndCleanup} 补齐
+     * —— 该键是 6000 tick 冷却唯一递减点。
      * 1.21 源: {@code ModEventHandlers.tryReturnFromHell(L1977)}。
      */
     public static boolean tryReturnFromHell(LivingEntity entity, LivingDeathEvent event) {

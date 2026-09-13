@@ -67,8 +67,9 @@ import java.util.WeakHashMap;
  *       {@code MinecraftServer} 无公开延时任务 API, 目灯改以"截止时刻 + LivingTickEvent
  *       清扫"(语义等价: 最后受击 3 秒后解除, 且重复受击自然续期)。</li>
  *   <li>自定义伤害类型(frost / true_damage / weeping_fire)是 1.21 数据驱动
- *       {@code damage_type}; 1.20.1 平台无对应数据与代码构造入口 → 相关分支标 TODO
- *       (仅保留可用原版标签 {@code DamageTypeTags.IS_FREEZING} 的部分)。</li>
+ *       {@code damage_type}; 1.20.1 平台无对应数据与代码构造入口 → 相关分支**保留差异**,
+ *       改用可用原版标签近似({@code DamageTypeTags.IS_FREEZING} 代 frost、
+ *       {@code IS_FIRE} 代 weeping_fire)。详见下方"平台差异清单"。</li>
  * </ul>
  *
  * <p><b>覆盖清单(附魔名 → 本类方法):</b>
@@ -83,15 +84,18 @@ import java.util.WeakHashMap;
  * 88. heaven_chain → {@link #onLivingDamage}(tryHeavenChain);
  * 73/74. snow_wound / snow_sorrow → {@link #onLivingDamage}(applySnowSorrow)
  *     + {@link #onLivingHurt}(冬痕易伤; 雪天 ×1.5 乘伤已由 common EventDamageConditions 处理);
- * 75. unyielding_fate → {@link #onLivingHurt}(生命不低于 1; 攻击×6 真伤类型转换见 TODO)。
+ * 75. unyielding_fate → {@link #onLivingHurt}(生命不低于 1; 攻击×6 真伤转换见"平台差异清单")。
  * </p>
  *
- * <p><b>TODO 清单:</b>
- * (a) 雪的伤 / 唯有命运的攻击侧"伤害类型转换"(frost / true_damage, 1.21 由
- *     WeepingFireHelper 的 hurt-HEAD mixin 实现)在 1.20.1 无对应 damage_type 数据与
- *     构造入口, 无法在事件层表达(×6 真伤 / 冰霜源), 待 damage_type 数据方案后补;
- * (b) 89. mercy_equal 信标绑定均分依赖 1.21 util BeaconMercyHelper(DataComponents
- *     化信标数据), 1.20.1 信标数据经 LevelChunk 持久化无等价 API → TODO;
+ * <p><b>平台差异清单(1.20.1 保留差异, 非待办)</b>:
+ * (a) 雪的伤(snow_wound) / 唯有命运(unyielding_fate)的攻击侧"伤害类型转换"
+ *     (1.21 由 WeepingFireHelper 的 hurt-HEAD mixin 转为 frost / true_damage 源):
+ *     1.20.1 无数据驱动 damage_type, **不可表达** → 保留差异。
+ *     受击侧相关判定改用原版标签近似(IS_FREEZING / IS_FIRE), 见 WeepingFireMixin 类头。
+ * (b) 89. mercy_equal 信标绑定均分: **已落地**, 但实现路径与 1.21 不同 ——
+ *     1.21 为 util {@code BeaconMercyHelper}(读 DataComponents 化信标数据);
+ *     1.20.1 信标数据经 LevelChunk 持久化, 改由 {@code BeaconMercyMixin} 的信标 tick
+ *     等价实现(见该 mixin)。本类不含 mercy 代码是**设计如此**, 非缺口。
  * (c) 泰坦(titan)判定已下沉 common(EventDamageConditions.isEliteOrBoss), ×2 由
  *     ForgeEventHandler1201 统一乘伤通道结算, 本类无需代码(见类头);
  * (d) keen_will / sharpen / hyperthymesia 已由批 A(TickEffectsBatch1)覆盖;

@@ -38,13 +38,14 @@ import java.util.UUID;
  *   <li>1.21 的 {@code ALObjects.Attributes.X}(apothic_attributes 包, Holder<Attribute>)
  *       在 1.20.1 是 {@code dev.shadowsoffire.attributeslib.api.ALObjects.Attributes.X},
  *       且字段类型为 {@code RegistryObject<Attribute>}(需 {@code .get()}); 字段名大部分同名。</li>
- *   <li>1.21 无 cooldown_reduction 之外的字段缺口见各方法 TODO。</li>
+ *   <li>1.21 相对 1.20.1 的属性字段缺口仅 cooldown_reduction / projectile_damage 两项
+ *       (经 attributeslib 1.3.7 类文件核对), 见各方法【平台差异】注。</li>
  *   <li>AttributeModifier 构造 1.21 用 ResourceLocation id; 1.20.1 用
  *       (UUID, name, amount, operation) —— 本文件沿用 AttributeAccess1201 的稳定 UUID 派生
  *       (uuidOf = nameUUIDFromBytes("zhonz:" + path)), name = id.toString()。</li>
  * </ul>
  *
- * 未接线: 本类尚未被任何事件订阅调用, 仅自身可编译(compileJava 验证)。
+ * 接线: 本类全部 tick 方法由 {@link EnchantWiring1201#onPlayerTick}(PlayerTickEvent.END)统一调用。
  */
 public final class TickEffectsBatch1 {
 
@@ -188,8 +189,8 @@ public final class TickEffectsBatch1 {
     // 45. 顶点 apex(1.21 源函数: ModEventHandlers#tickApex)
     //
     // 属性部分: 主手/副手持有 → 闪避 DODGE_CHANCE +0.20(ADD)、ATTACK_DAMAGE ×(1+5)(MULT_TOTAL)。
-    // TODO(受伤-60%): 1.21 由 applyApexIncoming(LivingIncomingDamageEvent, ×0.4) 实现 ——
-    // 1.20.1 无该事件, 需在 1.20.1 等价受击事件(LivingHurtEvent)适配, 见批内注; 此处仅 tick 属性。
+    // 受伤 -60%(×0.4)已补齐: 1.20.1 走 incoming_damage 通道, 见
+    // ForgeEventHandler1201.refreshIncomingAggregate1201(等价 1.21 applyApexIncoming)。
     // ===================================================================
     public static void tickApex(Player player, CompoundTag data) {
         int level = isHoldingApex(player) ? 1 : 0;
@@ -310,9 +311,10 @@ public final class TickEffectsBatch1 {
     // 每秒(20 tick)对带诅咒的可损坏装备扣 1% 耐久。
     // 1.20.1 无 1.21 Attributes.ENTITY_INTERACTION_RANGE/BLOCK_INTERACTION_RANGE → 用 Forge 等价
     // ForgeMod.ENTITY_REACH/BLOCK_REACH(默认 3.0/4.5, MULT_TOTAL -0.5 语义同 1.21 触摸距离 -50%)。
-    // TODO(冷却翻倍): 1.21 另写 COOLDOWN_REDUCTION ×(1-1.0); 1.20.1 Apothic
-    // (attributeslib 1.3.7) ALObjects.Attributes 无 COOLDOWN_REDUCTION 字段, 无法直引 → 待联调确认
-    // attributeslib 是否提供等价属性后补(涉及运行时属性 id 与实体挂接, 见 UNIMINED_MIGRATION 6.7)。
+    // 【平台差异·已核实不可表达】冷却翻倍: 1.21 另写 COOLDOWN_REDUCTION ×(1-1.0)。
+    // 1.20.1 Apothic(attributeslib 1.3.7) ALObjects.Attributes 经类文件常量池核对**确无**
+    // COOLDOWN_REDUCTION 字段(与 PROJECTILE_DAMAGE 同为 1.21 新增项) → 无属性可挂, 保留差异。
+    // 其它 6 项(触摸/方块交互距离、攻击伤害、攻速、挖掘、蓄力)均已落地。
     // ===================================================================
     public static void tickDivineCurse(Player player, CompoundTag data, int tickCount) {
         int level = anySlot(player, EnchantIds.DIVINE_CURSE);
@@ -332,7 +334,7 @@ public final class TickEffectsBatch1 {
                     mult, MULT_TOTAL);
             setTransient(player, ALObjects.Attributes.DRAW_SPEED.get(), DIVINE_CURSE_DRAW_MODIFIER,
                     mult, MULT_TOTAL);
-            // TODO(1.21: COOLDOWN_REDUCTION ×2): 1.20.1 attributeslib 无该字段, 见方法头注。
+            // 冷却翻倍(1.21 COOLDOWN_REDUCTION ×2)为平台不可表达项, 见方法头注【平台差异】。
         }
         if (level <= 0) return;
         // 每秒 1% 耐久损耗(带诅咒的装备)
@@ -388,8 +390,8 @@ public final class TickEffectsBatch1 {
     // 60. 奢侈的希望 luxurious_hope —— tick 属性部分
     // (1.21 源函数: ModEventHandlers#tickLuxuriousHope)
     // 任何槽位: 护甲穿透 ARMOR_PIERCE +0.5(ADD)、幸运 LUCK +0.2(ADD)。
-    // TODO(满血受伤+50%): 1.21 applyLuxuriousHopeIncoming(LivingIncomingDamageEvent ×1.5),
-    // 1.20.1 需在等价受击事件适配。
+    // 满血受伤 +50%(×1.5)已补齐: 1.20.1 走 incoming_damage 通道, 见
+    // ForgeEventHandler1201.refreshIncomingAggregate1201(等价 1.21 applyLuxuriousHopeIncoming)。
     // ===================================================================
     public static void tickLuxuriousHope(Player player, CompoundTag data) {
         boolean active = anySlot(player, EnchantIds.LUXURIOUS_HOPE) > 0;
@@ -464,13 +466,29 @@ public final class TickEffectsBatch1 {
 
     // ===================================================================
     // 64. 敷衍 perfunctory(1.21 源函数: ModEventHandlers#tickPerfunctory)
-    // 诅咒: 背包每有一件带此诅咒的物品, 移速/攻速/挖掘/蓄力 ×(1-0.2×件数)。
+    // 诅咒: 背包每有一件带**诅咒附魔**的物品, 移速/攻速/挖掘/蓄力 ×(1-0.2×件数)。
+    //
+    // 口径修正(round-ui): 早期实现数的是"带敷衍自己的物品", 与文档不符 —— 文档为
+    // "背包内每有一个物品带此**诅咒**"。现按本模组诅咒清单统计(与主工程
+    // data/minecraft/tags/enchantment/curse.json 的三个 id 保持一致)。
+    // 每件物品最多计 1 次。
     // ===================================================================
+    /** 本模组的诅咒附魔 id 清单(与 curse 标签同步: 这三个正是附魔名渲染为红色的附魔)。 */
+    private static final String[] CURSE_ENCHANTS = {
+            EnchantIds.DIVINE_CURSE, EnchantIds.SELF_BOUND, EnchantIds.PERFUNCTORY
+    };
+
     public static void tickPerfunctory(Player player, CompoundTag data) {
         int count = 0;
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
             ItemStack stack = player.getInventory().getItem(i);
-            if (hasEnchant(stack, EnchantIds.PERFUNCTORY)) count++;
+            if (stack.isEmpty()) continue;
+            for (String curseId : CURSE_ENCHANTS) {
+                if (hasEnchant(stack, curseId)) {
+                    count++; // 该物品至少带一件诅咒 → 计 1 次
+                    break;
+                }
+            }
         }
         int last = data.getInt(KEY_PERFUNCTORY_LAST);
         if (count == last) return;

@@ -65,11 +65,16 @@ public final class EnchantWiring1201 {
         TickSideBatch1.tickPatience(player, data, tc);
         TickSideBatch1.tickPaleMidnight(player, tc);
         TickSideBatch1.tickHalo(player, tc);
+        // 爆裂黎明: 装填期无敌(1.21 源 tickExplosiveDawn L2437-2450)
+        TickSideBatch1.tickExplosiveDawn(player, data);
         // 冷却递减 + 过期标记清理(必须: 永劫回归 6000 tick 冷却只在此递减)
         TickSideBatch1.tickCooldownsAndCleanup(player, data, tc);
 
         // ===== 攻击侧补齐 tick(批 AttackSideBatch1)=====
         // 37→36 断汝筋骨 → 舍吾皮肉: 切换后 3 秒还原(1.21 源 tickBoneBreakRevert L2420)
         AttackSideBatch1.tickBoneBreakRevert(player, data);
+        // 33. 不完整的预知眼: 概率恢复 + 同步 Apothic DODGE_CHANCE + 低概率反胃
+        //     (1.21 源 tickIncompleteForeknowledge L2461-2503)
+        AttackSideBatch1.tickIncompleteForeknowledge(player, tc);
     }
 }

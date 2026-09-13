@@ -12,7 +12,7 @@
 
 ---
 
-## 一、已实现附魔(37)
+## 一、已实现附魔(1-37)
 
 ### 1. 终结 (Finale) — `finale`
 - **可附魔**:攻击伤害 ≥ 7 的近战武器
@@ -407,6 +407,11 @@
 ### 64. 敷衍 — `perfunctory` ✅
 - **可附魔**:所有正常可附魔物品(诅咒)
 - **效果**:背包内每有一个物品带此诅咒,移动/攻击/挖掘/蓄力速度 -20%
+- **实现**:`tickPerfunctory` 统计背包内**带诅咒附魔的物品件数** × (-20%), 写入
+  `movement_speed` / `attack_speed` / `MINING_SPEED` / `DRAW_SPEED` 四个 ADD_MULTIPLIED_BASE 修饰符。
+  **每件物品最多计 1 次**(带多件诅咒不多算); 诅咒判定 = 本模组诅咒清单
+  (`divine_curse` / `self_bound` / `perfunctory`, 与 `tags/enchantment/curse.json` 一致)。
+  > 口径修正(v1.3.2): 早期实现误为"统计带**敷衍自己**的物品数", 与本文档描述不符; 现按诅咒统计。
 
 ### 65. 沉默沉入沉渊 — `silence_in_depths` ✅
 - **可附魔**:武器
@@ -627,3 +632,65 @@
 ### 7.3 暂不接入(机制完全自定义,属性帮不上)
 
 终结、收割(处决判定)、宝石伞(击退+矿物)、鱼丸(耐久转移)、解放者(计时倍率)、我的海疆(减益叠加)、群体打击(溅射)、自卑胜过一切(窃取 buff)、无垢之人(免疫 debuff)、血泣(自伤换伤)、紧急救援(回复效果)、压制(定身+损毁)、先知的长鸣(发光+增伤)、自地狱中归来(复活)、倏忽恩赐(记录伤害)、神护(图腾触发)、必须开辟的通路(投掷+传送)、血路(击杀计数存储)、智能图腾(背包触发)、舍吾皮肉(状态转换)、"挂"(作弊)、食腐者(饥饿免疫)。
+
+## 八、跨版本差异(1.20.1 Forge / NeoForge)
+
+> 三平台矩阵: **NeoForge 1.21.1**(主工程, 91 附魔全量) / **Forge 1.20.1** / **NeoForge 1.20.1**。
+> 本节登记 1.20.1 与 1.21.1 的**语义差异**, 便于判断"某附魔在 1.20.1 上是否完整"。
+> round-close(2026-09-12)已把早期大量"待补 TODO"逐条复核: **绝大多数已落地**, 只剩下列项。
+
+### 8.1 平台不可表达(保留差异, 非待办)
+
+| 项 | 差异 | 原因 |
+|---|---|---|
+| **神咒** 的冷却减半 | 1.20.1 缺少 `COOLDOWN_REDUCTION` 属性一面 | 1.20.1 Apothic(attributeslib 1.3.7)经类文件核对确无该字段(亦无 `PROJECTILE_DAMAGE`);其余五项属性(攻击速度/挖掘/触摸/方块交互/攻击伤害/蓄力)已全部落地 |
+| **慈悲** 的信标绑定实现路径 | 1.20.1 走 `BeaconMercyMixin` 的信标 tick, 而非 1.21 的 `BeaconMercyHelper` | 1.21 用 DataComponents 化信标数据; 1.20.1 信标数据经 LevelChunk 持久化, 无等价 API。**功能等价** |
+| **冬痕** 首次命中的 ×1.5 | 1.20.1 首次命中可能吃不到 | 标记在护甲后伤害结算中写入, 而同次命中的 ×1.5 在结算前读取(相位差); 1.21 靠同相位标记流规避 |
+
+### 8.2 已补齐的跨版本移植(round-close)
+
+以下是**曾经缺失、现已落地**的项 —— 1.20.1 平台与 1.21.1 行为一致:
+
+| 项 | 1.21 做法 | 1.20.1 落地方式 |
+|---|---|---|
+| **自定义伤害类型** weeping_fire / frost / true_damage | 数据驱动 `damage_type` JSON | **代码注册** `DamageTypes1201` + 同名 JSON 描述 + `tags/damage_type` 标签(true_damage→bypasses_armor/enchantments/resistance/effects, frost→is_freezing) |
+| **雪的伤** → 冰霜伤害 | `WeepingFireHelper` 转 `frost` 源 | 同上, `WeepingFireMixin` 三路判定(哭泣之子→weeping_fire ×1 / 雪的伤→frost ×1 / 唯有命运→true_damage **×6**), 优先级与 1.21 同序 |
+| **唯有命运** → 真伤 ×6 | 同上(真伤类型 + ×6) | 同上 |
+| **投掷三叉戟**的"哭泣之子"分支 | `ThrownTrident.getWeaponItem()`(public) | 新增 mixin **`ThrownTridentAccessor`** 读 private `tridentItem` 字段(1.20.1 仅有 protected `getPickupItem()`) |
+| **不完整的预知眼**(#33)闪避 | `LivingIncomingDamageEvent` + `isDodging` 兜底 | 护甲前 `LivingHurtEvent` 等价相位 + 1.20.1 的 `dev.shadowsoffire.attributeslib.impl.AttributeEvents.isDodging` 兜底; tick 侧(概率恢复 / 同步 `DODGE_CHANCE` / 低概率反胃)由 `TickSideBatch1` 补齐 |
+| **节奏**(rhythm)×1.5 | 链上写标志 + 乘伤通道读 | 此前**只有读侧、写侧缺失 → 永不生效**; 现于 `onLivingDamage` 内、事件乘伤判定**之前**写标志(与 1.21 同序) |
+| **爆裂黎明** 装填无敌 | `tickExplosiveDawn` 消费"装填中"标志 | 此前**标志写了没人读**; 现补 `TickSideBatch1.tickExplosiveDawn`(装填期抗性提升 V) |
+| **我的海疆** 标记易伤流 | 同相位标记流 | 攻击段写标记(`applyMySeaDomainMark`)+ 受击段读(`incomingConditionalFactor`, 含 1200 tick 过期) |
+| 各类 tick 维护 | `onPlayerTick` 内 | 全部位于 `TickSideBatch1`, 由 `EnchantWiring1201.onPlayerTick` 统一调用 |
+
+### 8.3 附魔名颜色与诅咒标注(round-close 修复)
+
+| 事实 | 说明 |
+|---|---|
+| **诅咒色是红色(红+斜体)** | 1.21 由 `Enchantment.getFullname` 判定: `holder.is(EnchantmentTags.CURSE)` → `ChatFormatting.RED`, 否则 `GRAY`(经字节码核实)。**注意红色斜体不来自 `is_curse` 字段** —— 1.21 的 `EnchantmentDefinition` 里根本没有该字段 |
+| **1.21 落地方式** | 标签文件 `data/minecraft/tags/enchantment/curse.json`, 现声明 **`divine_curse` / `self_bound`** |
+| **1.20.1 落地方式** | 1.20.1 的 `isCurse()` 默认 `false` 且 `getFullname` 按它选 RED/GRAY(仅 4 个字段, 无 curse 字段靠标签) → 新增 `CurseEnchantment` 基类覆写 `isCurse()`, 两个诅咒附魔改用它注册 |
+| **紫色斜体(`§d§o`)仅用于一个附魔** | 只有 **#2「将我抹去, 将你也抹去」(`erase_me_erase_you`)** 按设计是紫色斜体(见本章 #2 与 README「名称显示为紫色斜体字体」)。此前误把它同时贴到了 #45 顶点 / #50 新太阳 / #55 于此显圣 / #57 悲伤的红 / #59 永劫回归 / #60 奢侈的希望 / #75 唯有命运 共 7 个附魔名上, **已全部移除**; 附魔名末尾的 `§r` 复位码保留(防止名字样式渗入后续描述行) |
+
+### 8.4 增伤 / 乘伤数值常驻(可在属性面板看到)
+
+> round-close: 用户明确要求这两个通道的**实际数值能持续看到**, 而不是只在伤害结算的那一瞬存在。
+
+| 通道 | 属性 | 面板显示 |
+|---|---|---|
+| 加伤 | `bonus_damage`(默认 0) | 面板显示 `1 + Σ` 各类加伤百分比修饰符 |
+| 乘伤 | `damage_multiplier`(默认 1) | 面板显示乘伤总乘积 |
+| 固定加伤 | `flat_damage`(默认 0) | 面板显示固定加伤量 |
+
+**为什么之前"看不到"**(根因已定位):
+
+| 项 | 说明 |
+|---|---|
+| 三个通道属性**保持同步** | `setSyncable(true)`(一度误改为 `false` 试图隐藏, 已回退)。面板只列已同步属性, 故必须同步才会出现 |
+| 加伤修饰符本就常驻 | 各附魔用**独立 modifier id**(`bonus_supreme_art` / `bonus_new_sun` / `bonus_cornered_beast` / `bonus_rapid_ascent` / `bonus_sorrowful_red`)在 PlayerTick 每 tick 覆盖写入 → 属性值持续非默认 |
+| 乘伤聚合本就常驻 | `refreshDamageMultiplierAggregate` 每 tick 写单一聚合 modifier `unified_mult_aggregate` |
+| **受击侧曾两次受击之间归零(已修)** | 1.20.1 平台在 `onLivingDamage` 尾部把 `incoming_tick_aggregate` **重置为 1**, 于是两次受击之间 `incoming_damage` 读回 1 —— 即"数值只在伤害瞬间存在"。现已**只清事件临时聚合** `incoming_event_mult`, tick 常驻聚合保持常驻(与 1.21.1 主工程一致) |
+
+> 说明: 事件条件型加伤/乘伤(如泰坦打精英 ×2、破军目标低血 +30%)依赖**目标状态**, 只在
+> 命中瞬间以临时 modifier 计入并立即清除, 因此**不会**常驻显示 —— 这是设计使然, 面板反映的是
+> "自身状态可判定"的那部分常驻加成。

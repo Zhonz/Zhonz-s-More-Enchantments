@@ -1,17 +1,20 @@
 package com.zhonz.moreenchantments.neoforge1201.mixin;
 
 import com.zhonz.moreenchantments.common.enchant.EnchantIds;
+import com.zhonz.moreenchantments.neoforge1201.DamageTypes1201;
 import com.zhonz.moreenchantments.neoforge1201.EnchantmentLookup1201;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageType;
-import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.projectile.ThrownTrident;
+import net.minecraft.world.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -43,17 +46,86 @@ public abstract class PlayerWeepingFireMixin {
     private void zhonz$playerWeepingFireConversion(DamageSource source, float amount, CallbackInfoReturnable<Boolean> cir) {
         Player self = (Player) (Object) this;
         if (self.level().isClientSide()) return;
-        if (source.is(DamageTypeTags.IS_FIRE)) return; // 已转换(或任何火焰): 递归护栏
+        // 递归护栏(与 WeepingFireMixin 同): 已是本 mod 自定义类型 / 任何火焰 → 不二次转换
+        if (zhonz$isConverted(source) || source.is(DamageTypeTags.IS_FIRE)) return;
         if (amount <= 0.0F) return;
         if (self.isInvulnerableTo(source)) return;
 
-        LivingEntity attacker = zhonz$findWeepingAttacker(source);
-        if (attacker == null || attacker == self) return;
+        AttackerType at = zhonz$findWielderType(source);
+        if (at == null || at.attacker == self) return;
 
-        Holder<DamageType> fireHolder = self.level().registryAccess()
-                .registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(DamageTypes.ON_FIRE);
-        DamageSource fireSource = new DamageSource(fireHolder, attacker, attacker);
-        cir.setReturnValue(self.hurt(fireSource, amount));
+        Holder<DamageType> holder = self.level().registryAccess()
+                .registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(at.type);
+        DamageSource converted = new DamageSource(holder, at.attacker, at.attacker);
+        float newAmount = at.multiplier == 1.0F ? amount : amount * at.multiplier;
+        cir.setReturnValue(self.hurt(converted, newAmount));
+    }
+
+    /** 攻击者 + 目标伤害类型 + 倍率(等价 1.21 {@code WeepingFireHelper.AttackerType})。 */
+    @Unique
+    private record AttackerType(LivingEntity attacker, net.minecraft.resources.ResourceKey<DamageType> type,
+                               float multiplier) {
+    }
+
+    @Unique
+    private static boolean zhonz$isConverted(DamageSource source) {
+        return source.is(DamageTypes1201.WEEPING_FIRE.getKey())
+                || source.is(DamageTypes1201.FROST.getKey())
+                || source.is(DamageTypes1201.TRUE_DAMAGE.getKey());
+    }
+
+    /**
+     * 有效攻击者 + 伤害类型 + 倍率(1.21 源: {@code WeepingFireHelper.findWielderType})。
+     * 优先级同 1.21: 哭泣之子(weeping_fire ×1) → 雪的伤(frost ×1) → 唯有命运(true_damage ×6)。
+     */
+    @Unique
+    private static AttackerType zhonz$findWielderType(DamageSource source) {
+        Entity direct = source.getDirectEntity();
+        Entity causing = source.getEntity();
+        if (direct != null && direct == causing && direct instanceof LivingEntity le) {
+            AttackerType t = zhonz$typeFor(le);
+            if (t != null) return t;
+        }
+        if (direct instanceof Projectile proj && causing instanceof LivingEntity shooter
+                && proj.getOwner() == causing) {
+            AttackerType t = zhonz$typeFor(shooter);
+            if (t != null) return t;
+        }
+        // 投掷三叉戟: 附魔在三叉戟自身物品上(1.21 getWeaponItem → 1.20.1 @Accessor)
+        if (direct instanceof net.minecraft.world.entity.projectile.ThrownTrident tt) {
+            ItemStack weapon = ((ThrownTridentAccessor) tt).zhonz$getTridentItem();
+            if (weapon != null && !weapon.isEmpty() && zhonz$hasWeeping(weapon)
+                    && tt.getOwner() instanceof LivingEntity wielder) {
+                return new AttackerType(wielder, DamageTypes1201.WEEPING_FIRE.getKey(), 1.0F);
+            }
+        }
+        return null;
+    }
+
+    /** 按"主手附魔 / 全身唯有命运"给出伤害类型(1.21 同序)。 */
+    @Unique
+    private static AttackerType zhonz$typeFor(LivingEntity le) {
+        if (zhonz$hasWeeping(le)) {
+            return new AttackerType(le, DamageTypes1201.WEEPING_FIRE.getKey(), 1.0F);
+        }
+        if (EnchantmentLookup1201.INSTANCE.mainHand(le, EnchantIds.SNOW_WOUND) > 0) {
+            return new AttackerType(le, DamageTypes1201.FROST.getKey(), 1.0F);
+        }
+        if (zhonz$wearsUnyieldingFate(le)) {
+            return new AttackerType(le, DamageTypes1201.TRUE_DAMAGE.getKey(), 6.0F);
+        }
+        return null;
+    }
+
+    /** 唯有命运: 任一件盔甲带该附魔(1.21 源: wearsUnyieldingFate)。 */
+    @Unique
+    private static boolean zhonz$wearsUnyieldingFate(LivingEntity entity) {
+        for (net.minecraft.world.entity.EquipmentSlot slot : new net.minecraft.world.entity.EquipmentSlot[]{
+                net.minecraft.world.entity.EquipmentSlot.HEAD, net.minecraft.world.entity.EquipmentSlot.CHEST,
+                net.minecraft.world.entity.EquipmentSlot.LEGS, net.minecraft.world.entity.EquipmentSlot.FEET}) {
+            if (EnchantmentLookup1201.INSTANCE.slot(entity, EnchantIds.UNYIELDING_FATE, slot) > 0) return true;
+        }
+        return false;
     }
 
     @Unique
@@ -66,8 +138,27 @@ public abstract class PlayerWeepingFireMixin {
         if (direct instanceof Projectile proj && causing instanceof LivingEntity shooter) {
             if (proj.getOwner() == causing && zhonz$hasWeeping(shooter)) return shooter;
         }
-        // TODO(1.21 有): 投掷三叉戟自身附魔分支 —— 1.20.1 需 @Accessor 读 ThrownTrident.tridentItem, 本批不移植。
+        // 投掷三叉戟: 掷出后抬手已空, 附魔在三叉戟自身物品上(1.21 getWeaponItem → @Accessor)
+        if (direct instanceof net.minecraft.world.entity.projectile.ThrownTrident tt) {
+            ItemStack weapon = ((ThrownTridentAccessor) tt).zhonz$getTridentItem();
+            if (weapon != null && !weapon.isEmpty() && zhonz$hasWeeping(weapon)
+                    && tt.getOwner() instanceof LivingEntity wielder) {
+                return wielder;
+            }
+        }
         return null;
+    }
+
+    /** 物品自身是否带"哭泣之子"(1.20.1: ForgeRegistries 查 → getEnchantmentLevel)。 */
+    @Unique
+    private static boolean zhonz$hasWeeping(ItemStack stack) {
+        net.minecraft.world.item.enchantment.Enchantment ench =
+                net.minecraftforge.registries.ForgeRegistries.ENCHANTMENTS.getValue(
+                        new net.minecraft.resources.ResourceLocation(
+                                com.zhonz.moreenchantments.neoforge1201.CommonConstants1201.MODID,
+                                EnchantIds.WEEPING_CHILD));
+        if (ench == null) return false;
+        return net.minecraft.world.item.enchantment.EnchantmentHelper.getItemEnchantmentLevel(ench, stack) > 0;
     }
 
     @Unique

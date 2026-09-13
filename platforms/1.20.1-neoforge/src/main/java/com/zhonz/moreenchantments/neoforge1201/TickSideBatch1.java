@@ -90,6 +90,8 @@ public final class TickSideBatch1 {
     private static final String KEY_BURNING_DUSK_UNTIL = "zhonz_burning_dusk_until";
     private static final String KEY_PALE_VULN_UNTIL = "zhonz_pale_midnight_vuln_until";
     private static final String KEY_FLIPPING_COIN_ATTACK_STACKS = "zhonz_flipping_coin_attack_stacks";
+    /** 爆裂黎明"装填中"标志(与 1.21 ModEventHandlers L96 同值; 写入侧在 SideEffectsBatch1)。 */
+    private static final String KEY_EXPLOSIVE_DAWN_RELOADING = "zhonz_explosive_dawn_reloading";
     /** 剥壳逐攻击者百分比键前缀(1.21 同: "zhonz_shell_strip_percent_")。 */
     private static final String SHELL_STRIP_PREFIX = "zhonz_shell_strip_percent_";
 
@@ -353,6 +355,28 @@ public final class TickSideBatch1 {
             nearby.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 60, 2));
         }
         data.putInt(KEY_EMERGENCY_RESCUE_CD, 200);
+    }
+
+    // ===================================================================
+    // 爆裂黎明 explosive_dawn —— 装填期无敌
+    // (1.21 源函数: ModEventHandlers#tickExplosiveDawn L2437-2450)
+    //
+    // applyExplosiveDawn(攻击事件内)在命中时写 KEY_EXPLOSIVE_DAWN_RELOADING=true,
+    // 本方法在玩家 tick 消费该标志: 装填期(手持弩且正在使用)持续给抗性提升 V;
+    // 未装填则清除标志(避免残留)。
+    // ===================================================================
+    public static void tickExplosiveDawn(Player player, CompoundTag data) {
+        int level = mainHand(player, EnchantIds.EXPLOSIVE_DAWN);
+        if (level <= 0 || !player.isUsingItem() || !player.getUseItem().is(Items.CROSSBOW)) {
+            if (data.getBoolean(KEY_EXPLOSIVE_DAWN_RELOADING)) {
+                data.putBoolean(KEY_EXPLOSIVE_DAWN_RELOADING, false);
+            }
+            return;
+        }
+        if (data.getBoolean(KEY_EXPLOSIVE_DAWN_RELOADING)) {
+            // 装填中无敌(1.21: 抗性提升 V, amp 4, 40 tick 每次刷新)
+            player.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 40, 4, false, false));
+        }
     }
 
     // ===================================================================

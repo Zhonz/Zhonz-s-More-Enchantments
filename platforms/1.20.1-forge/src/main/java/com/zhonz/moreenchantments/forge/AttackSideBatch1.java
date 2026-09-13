@@ -3,6 +3,7 @@ package com.zhonz.moreenchantments.forge;
 import com.zhonz.moreenchantments.common.damage.UnifiedDamageEngine;
 import com.zhonz.moreenchantments.common.enchant.EnchantIds;
 import com.zhonz.moreenchantments.common.storage.EntityDataStorage;
+import dev.shadowsoffire.attributeslib.api.ALObjects;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.TickTask;
@@ -69,14 +70,20 @@ import java.util.Map;
  *       (例: "zhonz_my_sea_domain_start" 由 ForgeEventHandler1201.incomingConditionalFactor 读)。</li>
  *   <li>{@code ItemStack.hurtAndBreak(int, LivingEntity, EquipmentSlot)} 是 1.21 API;
  *       1.20.1 用 {@code hurtAndBreak(int, LivingEntity, Consumer)}。</li>
- *   <li>1.21 预知眼闪避({@code tryForeknowledgeDodge})本批未移植(不在本批清单): 因此
- *       {@link #recordFleetingGrace} 的调用点退化为"事件未被取消即累积"(Apothic 取消 =
- *       闪避成功时跳过), 见 {@link #onLivingHurt} 注释。</li>
+ *   <li>33. 不完整的预知眼闪避({@link #tryForeknowledgeDodge} / {@link #tickIncompleteForeknowledge})
+ *       已移植: 1.20.1 的等价相位同为护甲前的 {@code LivingHurtEvent}(Apothic 在此相位处理
+ *       DODGE_CHANCE 并取消事件表示闪避)。1.21 的 {@code AttributeEvents.isDodging} 兜底分支
+ *       (自行取消 + 位移 1/4 格)经 {@code dev.shadowsoffire.attributeslib.impl.AttributeEvents}
+ *       等价实现。tick 侧(概率恢复/sync DODGE_CHANCE/低概率反胃)由
+ *       {@link EnchantWiring1201#onPlayerTick} 调用。</li>
  * </ul>
  */
 public final class AttackSideBatch1 {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("ZhonzMoreEnchantments1201");
+
+    /** 1.21 源: ModEventHandlers#RANDOM —— 预知眼闪避位移方向。 */
+    private static final net.minecraft.util.RandomSource RANDOM = net.minecraft.util.RandomSource.create();
 
     // ===== Persistent Data 键(与 1.21 ModEventHandlers 常量值一致, 直接内联)=====
     /** 1.21: KEY_FLEETING_GRACE_STORED(L73)。 */
@@ -91,6 +98,22 @@ public final class AttackSideBatch1 {
     private static final String KEY_MY_SEA_DOMAIN_START = "zhonz_my_sea_domain_start";
     /** 1.21: KEY_BONE_BREAK_SWITCH_TICK(L93)。 */
     private static final String KEY_BONE_BREAK_SWITCH_TICK = "zhonz_bone_break_switch_tick";
+
+    // ===== 33. 不完整的预知眼(与 1.21 ModEventHandlers L101-103 常量值一致)=====
+    /** 1.21: KEY_FOREKNOWLEDGE_DODGE(L101) —— 当前闪避概率(初始 0.80)。 */
+    private static final String KEY_FOREKNOWLEDGE_DODGE = "zhonz_foreknowledge_dodge_prob";
+    /** 1.21: KEY_FOREKNOWLEDGE_LAST_COMBAT(L102) —— 上次战斗 tick(用于脱战恢复)。 */
+    private static final String KEY_FOREKNOWLEDGE_LAST_COMBAT = "zhonz_foreknowledge_last_combat";
+    /** 1.21: KEY_FOREKNOWLEDGE_DODGE_APPLIED(L103) —— 上次已同步到 Apothic 的值。 */
+    private static final String KEY_FOREKNOWLEDGE_DODGE_APPLIED = "zhonz_foreknowledge_dodge_applied";
+    /** 1.21: FOREKNOWLEDGE_DODGE_MODIFIER(L170)。 */
+    private static final ResourceLocation FOREKNOWLEDGE_DODGE_MODIFIER = rl("foreknowledge_dodge");
+    /** 1.21: 闪避概率上下限与恢复速率(L465/L475)。 */
+    private static final float FOREK_MIN_PROB = 0.05F;
+    private static final float FOREK_MAX_PROB = 0.80F;
+    private static final float FOREK_FAIL_PENALTY = 0.10F;
+    private static final float FOREK_RECOVER_PER_TICK = 0.0005F;
+    private static final long FOREK_RECOVER_DELAY_TICKS = 40L;
 
     /** 1.21: FINAL_COUNTDOWN_TICKS(L98) = 10 秒。 */
     private static final int FINAL_COUNTDOWN_TICKS = 200;
@@ -178,14 +201,137 @@ public final class AttackSideBatch1 {
             if (tryHarvest(attacker, defender, source, rawDamage, event)) return;
         }
 
+        // --- 33. 不完整的预知眼: 受击闪避(Apothic DODGE_CHANCE 已由 tickIncompleteForeknowledge 同步) ---
+        // 1.21: tryForeknowledgeDodge 触发(闪避成功)则不累积倏忽恩赐。
+        if (tryForeknowledgeDodge(defender, event)) return;
+
         // --- 倏忽恩赐: 受击累积(1.21 仅在预知眼未闪避时累积) ---
-        // 1.21: tryForeknowledgeDodge 未触发(未闪避)才记录。1.20.1 闪避由 Apothic Attributes
-        // 的属性处理器执行, 命中即取消本事件 → 此处以"事件未被取消"等价"未闪避"。
-        // TODO: 1.21 源还有 AttributeEvents.isDodging(defender) 兜底分支(自行取消并位移 1/4 格),
-        //       属预知眼移植范围(不在本批), 未移植。
         if (!event.isCanceled()) {
             recordFleetingGrace(defender, rawDamage);
         }
+    }
+
+    /**
+     * 33. 不完整的预知眼 —— 闪避判定(1.21 源: ModEventHandlers#tryForeknowledgeDodge L434-478)。
+     *
+     * <p>1.21 依赖 Apothic 在 {@code LivingIncomingDamageEvent} 中自行取消事件表示闪避成功;
+     * 1.20.1 的等价事件是 {@link LivingHurtEvent}(护甲前), Apothic 同样在此相位处理
+     * DODGE_CHANCE 并取消事件。因此本方法:
+     * <ol>
+     *   <li>头盔带该附魔 → 记录战斗 tick(阻止脱战恢复);</li>
+     *   <li>事件已被取消(= Apothic 判定闪避成功)→ 按设计向随机方向位移 1/4 格, 返回 true;</li>
+     *   <li>事件未被取消 → 用 {@code AttributeEvents.isDodging} 兜底(兼容事件注册顺序差异),
+     *       若该 tick 判定为闪避则自行取消事件 + 位移;</li>
+     *   <li>闪避失败 → 概率 -10%(下限 0.05), 下次 tick 重新同步到 DODGE_CHANCE。</li>
+     * </ol>
+     *
+     * @return true = 已闪避(调用方须 return, 不再执行受击累积)
+     */
+    public static boolean tryForeknowledgeDodge(LivingEntity defender, LivingHurtEvent event) {
+        if (slot(defender, EnchantIds.INCOMPLETE_FOREKNOWLEDGE_EYE, EquipmentSlot.HEAD) <= 0) return false;
+        CompoundTag data = edata(defender);
+        data.putLong(KEY_FOREKNOWLEDGE_LAST_COMBAT, defender.level().getGameTime());
+
+        if (event.isCanceled()) {
+            dodgeTeleport(defender);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("[ForeknowledgeEye] Dodged via Apothic! entity={}", defender.getName().getString());
+            }
+            return true;
+        }
+
+        // Apothic 事件未拦截时兜底: 该 tick 的确定性闪避判定为真则自行闪避(兼容事件顺序差异)
+        if (dev.shadowsoffire.attributeslib.impl.AttributeEvents.isDodging(defender)) {
+            dodgeTeleport(defender);
+            event.setCanceled(true);
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("[ForeknowledgeEye] Dodged via fallback (apoth isDodging)! entity={}",
+                        defender.getName().getString());
+            }
+            return true;
+        }
+
+        // 闪避失败: 概率 -10%, 下次 tick 同步到 DODGE_CHANCE 修饰
+        float prob = data.contains(KEY_FOREKNOWLEDGE_DODGE)
+                ? data.getFloat(KEY_FOREKNOWLEDGE_DODGE) : FOREK_MAX_PROB;
+        float newProb = Math.max(FOREK_MIN_PROB, prob - FOREK_FAIL_PENALTY);
+        data.putFloat(KEY_FOREKNOWLEDGE_DODGE, newProb);
+        data.putFloat(KEY_FOREKNOWLEDGE_DODGE_APPLIED, -1.0F); // 强制下次 tick 重新同步
+        if (LOGGER.isDebugEnabled()) {
+            var dodgeAttr = defender.getAttribute(ALObjects.Attributes.DODGE_CHANCE.get());
+            LOGGER.debug("[ForeknowledgeEye] Dodge failed! newProb={} dodgeChance={}",
+                    newProb, dodgeAttr != null ? dodgeAttr.getValue() : -1.0);
+        }
+        return false;
+    }
+
+    /** 闪避成功: 按设计向随机方向位移 1/4 格(1.21 源 L443-445)。 */
+    private static void dodgeTeleport(LivingEntity defender) {
+        float angle = RANDOM.nextFloat() * 2.0F * (float) Math.PI;
+        defender.teleportTo(defender.getX() + Math.cos(angle) * 0.25, defender.getY(),
+                defender.getZ() + Math.sin(angle) * 0.25);
+    }
+
+    /**
+     * 33. 不完整的预知眼 —— tick 侧(1.21 源: ModEventHandlers#tickIncompleteForeknowledge L2461-2503)。
+     *
+     * <p>职责: ①未穿戴时移除 DODGE_CHANCE 修饰防残留; ②脱战 2 秒后每秒 +1% 概率回复(上限 0.80);
+     * ③概率变化时同步到 Apothic 的 DODGE_CHANCE; ④概率 &lt; 0.20 时每 10 tick 施加反胃。
+     */
+    public static void tickIncompleteForeknowledge(Player player, int tickCount) {
+        CompoundTag data = edata(player);
+        int level = slot(player, EnchantIds.INCOMPLETE_FOREKNOWLEDGE_EYE, EquipmentSlot.HEAD);
+
+        if (level <= 0) {
+            // 未穿戴: 移除 DODGE_CHANCE 修饰, 防止残留
+            if (data.getFloat(KEY_FOREKNOWLEDGE_DODGE_APPLIED) > 0.0F) {
+                removeDodgeModifier(player);
+                data.putFloat(KEY_FOREKNOWLEDGE_DODGE_APPLIED, 0.0F);
+            }
+            return;
+        }
+
+        long lastCombat = data.getLong(KEY_FOREKNOWLEDGE_LAST_COMBAT);
+        // 恢复: 停止战斗 2 秒(40 tick)后开始, 每秒 +1%(0.0005/tick), 约 75 秒从 0.05 回满到 0.80
+        if (player.level().getGameTime() - lastCombat > FOREK_RECOVER_DELAY_TICKS) {
+            float prob = data.contains(KEY_FOREKNOWLEDGE_DODGE)
+                    ? data.getFloat(KEY_FOREKNOWLEDGE_DODGE) : FOREK_MAX_PROB;
+            if (prob < FOREK_MAX_PROB) {
+                data.putFloat(KEY_FOREKNOWLEDGE_DODGE, Math.min(FOREK_MAX_PROB, prob + FOREK_RECOVER_PER_TICK));
+            }
+        }
+
+        // 同步当前概率到 Apothic DODGE_CHANCE 修饰(仅在变化时更新)
+        float prob = data.contains(KEY_FOREKNOWLEDGE_DODGE)
+                ? data.getFloat(KEY_FOREKNOWLEDGE_DODGE) : FOREK_MAX_PROB;
+        float applied = data.getFloat(KEY_FOREKNOWLEDGE_DODGE_APPLIED);
+        if (Math.abs(applied - prob) > 0.0001F) {
+            data.putFloat(KEY_FOREKNOWLEDGE_DODGE_APPLIED, prob);
+            AttributeInstance dodge = player.getAttribute(ALObjects.Attributes.DODGE_CHANCE.get());
+            if (dodge != null) {
+                // 注: Apothic DODGE_CHANCE 以 ADDITION(加和)语义累加概率, 故经 addPercentBonus
+                // 写入(该辅助内部先清同 id 残留, 幂等, 不会叠加)。
+                UnifiedDamageEngine.addPercentBonus(dodge, FOREKNOWLEDGE_DODGE_MODIFIER, prob);
+            }
+            if (LOGGER.isDebugEnabled()) {
+                var attr = player.getAttribute(ALObjects.Attributes.DODGE_CHANCE.get());
+                LOGGER.debug("[ForeknowledgeEye] Synced dodgeChance: prob={} attrValue={}",
+                        prob, attr != null ? attr.getValue() : -1.0);
+            }
+        }
+
+        // 低闪避率时持续反胃模糊视野: 每 10 tick 施加, 持续 60 tick
+        if (prob < 0.20F && tickCount % 10 == 0) {
+            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                    net.minecraft.world.effect.MobEffects.CONFUSION, 60, 0, false, true));
+        }
+    }
+
+    /** 移除预知眼的 DODGE_CHANCE 修饰(1.21 源: removeModifier L2468; 写 0% = 仅移除该 id)。 */
+    private static void removeDodgeModifier(Player player) {
+        AttributeInstance dodge = player.getAttribute(ALObjects.Attributes.DODGE_CHANCE.get());
+        if (dodge == null) return;
+        UnifiedDamageEngine.addPercentBonus(dodge, FOREKNOWLEDGE_DODGE_MODIFIER, 0.0D);
     }
 
     /**
@@ -315,6 +461,43 @@ public final class AttackSideBatch1 {
         if (inst == null) return;
         UnifiedDamageEngine.setFlatDamage(inst, EVENT_FLAT_GRACE, 0.0D);
         UnifiedDamageEngine.setFlatDamage(inst, EVENT_FLAT_FLEET, 0.0D);
+    }
+
+    /**
+     * 41. 节奏(1.21 源: ModEventHandlers#applyRhythm L1192-1216, 调用点 L701)。
+     *
+     * <p>主手带 rhythm 时计时: 与上次攻击的间隔若在"首次记录的间隔 ±4 tick(0.2 秒)"内,
+     * 写入 {@code keyHit} 标志; 命中判定的 ×1.5 <b>乘伤</b>由 common
+     * {@code EventDamageConditions.computeConditionalMultiplier} 读取该标志后应用并清除
+     * (round13 拆解: 链上只留计时副作用)。
+     *
+     * <p><b>调用顺序要求</b>: 必须在 {@code computeConditionalMultiplier} <b>之前</b>调用,
+     * 否则本 tick 写入的标志要等到下一次命中才被消费 —— 与 1.21 源一致
+     * (1.21 在 applyAttackerEnchantments L701 写标志, 同事件 L508 读取)。
+     *
+     * @param keyLast     上次攻击 tick 的数据键(与 1.21 KEY_RHYTHM_LAST_ATTACK 同值)
+     * @param keyRecorded 已记录攻击间隔的数据键(与 1.21 KEY_RHYTHM_RECORDED_INTERVAL 同值)
+     * @param keyHit      命中标志的数据键(与 1.21 KEY_RHYTHM_HIT_ATTACK 同值, 由 common 判定侧读取并清除)
+     * @return 本次是否命中节奏判定
+     */
+    public static boolean applyRhythm(LivingEntity attacker, String keyLast, String keyRecorded, String keyHit) {
+        if (mainHand(attacker, EnchantIds.RHYTHM) <= 0) return false;
+        CompoundTag data = edata(attacker);
+        long now = attacker.level().getGameTime();
+        long last = data.getLong(keyLast);
+        boolean matched = false;
+        if (last != 0L) {
+            long interval = now - last;
+            int recorded = data.getInt(keyRecorded);
+            if (recorded == 0) {
+                data.putInt(keyRecorded, (int) interval);
+            } else if (Math.abs(interval - recorded) <= 4L) {
+                matched = true;
+                data.putBoolean(keyHit, true);
+            }
+        }
+        data.putLong(keyLast, now);
+        return matched;
     }
 
     // ===================================================================

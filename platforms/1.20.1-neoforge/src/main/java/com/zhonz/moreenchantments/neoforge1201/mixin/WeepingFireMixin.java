@@ -1,6 +1,7 @@
 package com.zhonz.moreenchantments.neoforge1201.mixin;
 
 import com.zhonz.moreenchantments.common.enchant.EnchantIds;
+import com.zhonz.moreenchantments.neoforge1201.AttackerType1201;
 import com.zhonz.moreenchantments.neoforge1201.DamageTypes1201;
 import com.zhonz.moreenchantments.neoforge1201.EnchantmentLookup1201;
 import net.minecraft.core.Holder;
@@ -60,29 +61,23 @@ public abstract class WeepingFireMixin {
         if (amount <= 0.0F) return;
         if (self.isInvulnerableTo(source)) return; // 原本就打不中, 无需转换
 
-        AttackerType at = zhonz$findWielderType(source);
-        if (at == null || at.attacker == self) return;
+        AttackerType1201 at = zhonz$findWielderType(source);
+        if (at == null || at.attacker() == self) return;
 
         Holder<DamageType> holder = self.level().registryAccess()
-                .registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(at.type);
-        DamageSource converted = new DamageSource(holder, at.attacker, at.attacker);
-        float newAmount = at.multiplier == 1.0F ? amount : amount * at.multiplier;
+                .registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(at.type());
+        DamageSource converted = new DamageSource(holder, at.attacker(), at.attacker());
+        float newAmount = at.multiplier() == 1.0F ? amount : amount * at.multiplier();
         boolean result = self.hurt(converted, newAmount);
         cir.setReturnValue(result);
-    }
-
-    /** 攻击者 + 目标伤害类型 + 倍率(等价 1.21 {@code WeepingFireHelper.AttackerType})。 */
-    @Unique
-    private record AttackerType(LivingEntity attacker, net.minecraft.resources.ResourceKey<DamageType> type,
-                               float multiplier) {
     }
 
     /** 该源是否已是本 mod 的自定义伤害类型(重放层护栏)。 */
     @Unique
     private static boolean zhonz$isConverted(DamageSource source) {
-        return source.is(DamageTypes1201.WEEPING_FIRE.getKey())
-                || source.is(DamageTypes1201.FROST.getKey())
-                || source.is(DamageTypes1201.TRUE_DAMAGE.getKey());
+        return source.is(DamageTypes1201.WEEPING_FIRE)
+                || source.is(DamageTypes1201.FROST)
+                || source.is(DamageTypes1201.TRUE_DAMAGE);
     }
 
     /**
@@ -92,19 +87,19 @@ public abstract class WeepingFireMixin {
      * 近战直接命中取攻击者主手, 投射物取 shooter 主手, 投掷三叉戟取三叉戟自身物品。
      */
     @Unique
-    private static AttackerType zhonz$findWielderType(DamageSource source) {
+    private static AttackerType1201 zhonz$findWielderType(DamageSource source) {
         Entity direct = source.getDirectEntity();
         Entity causing = source.getEntity();
 
         // 近战 / 直接: 直接实体 == 造成者
         if (direct != null && direct == causing && direct instanceof LivingEntity le) {
-            AttackerType t = zhonz$typeFor(le);
+            AttackerType1201 t = zhonz$typeFor(le);
             if (t != null) return t;
         }
         // 投射物: 直接实体是箭/三叉戟/雪球等, owner == 造成者
         if (direct instanceof Projectile proj && causing instanceof LivingEntity shooter
                 && proj.getOwner() == causing) {
-            AttackerType t = zhonz$typeFor(shooter);
+            AttackerType1201 t = zhonz$typeFor(shooter);
             if (t != null) return t;
         }
         // 投掷三叉戟: 掷出后抬手已空, 附魔在三叉戟自身物品上(1.21 getWeaponItem → 1.20.1 @Accessor)
@@ -113,23 +108,30 @@ public abstract class WeepingFireMixin {
             if (weapon != null && !weapon.isEmpty()
                     && zhonz$hasEnchant(weapon, EnchantIds.WEEPING_CHILD)
                     && tt.getOwner() instanceof LivingEntity wielder) {
-                return new AttackerType(wielder, DamageTypes1201.WEEPING_FIRE.getKey(), 1.0F);
+                return new AttackerType1201(wielder, DamageTypes1201.WEEPING_FIRE, 1.0F);
             }
         }
         return null;
     }
 
-    /** 按"主手附魔 / 全身唯有命运"给出攻击者的伤害类型(1.21 同序: 哭泣之子 → 雪的伤 → 唯有命运)。 */
+    /** 按"主手附魔 / 全身唯有命运 / 背包挂"给出攻击者的伤害类型
+     *  (1.21 同序: 哭泣之子 → 雪的伤 → 唯有命运 → 挂)。 */
     @Unique
-    private static AttackerType zhonz$typeFor(LivingEntity le) {
+    private static AttackerType1201 zhonz$typeFor(LivingEntity le) {
         if (zhonz$hasWeeping(le)) {
-            return new AttackerType(le, DamageTypes1201.WEEPING_FIRE.getKey(), 1.0F);
+            return new AttackerType1201(le, DamageTypes1201.WEEPING_FIRE, 1.0F);
         }
         if (EnchantmentLookup1201.INSTANCE.mainHand(le, EnchantIds.SNOW_WOUND) > 0) {
-            return new AttackerType(le, DamageTypes1201.FROST.getKey(), 1.0F);
+            return new AttackerType1201(le, DamageTypes1201.FROST, 1.0F);
         }
         if (zhonz$wearsUnyieldingFate(le)) {
-            return new AttackerType(le, DamageTypes1201.TRUE_DAMAGE.getKey(), 6.0F);
+            return new AttackerType1201(le, DamageTypes1201.TRUE_DAMAGE, 6.0F);
+        }
+        // 挂(hang): 文档 #27(ENCHANTMENTS.md L162)「在背包内时…攻击造成真实伤害」。
+        // 原实现完全没有这条路径(真伤只由唯有命运产生); 文档未给倍率, 故取 ×1。
+        // 放在最后 → 不影响哭泣之子/雪的伤/唯有命运既有的优先级。
+        if (zhonz$hasHangInInventory(le)) {
+            return new AttackerType1201(le, DamageTypes1201.TRUE_DAMAGE, 1.0F);
         }
         return null;
     }
@@ -188,5 +190,20 @@ public abstract class WeepingFireMixin {
     @Unique
     private static boolean zhonz$hasWeeping(LivingEntity entity) {
         return EnchantmentLookup1201.INSTANCE.mainHand(entity, EnchantIds.WEEPING_CHILD) > 0;
+    }
+
+    /**
+     * 挂(hang) 的触发条件: **背包内**有带该附魔的物品(文档 #27「在背包内时…攻击造成真实伤害」)。
+     * 只有玩家有"背包", 其它生物没有该附魔的载体 → 非玩家恒 false。
+     * 1.21 源: {@code WeepingFireHelper.hasHangInInventory}。
+     */
+    @Unique
+    private static boolean zhonz$hasHangInInventory(LivingEntity entity) {
+        if (!(entity instanceof net.minecraft.world.entity.player.Player player)) return false;
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (!stack.isEmpty() && zhonz$hasEnchant(stack, EnchantIds.HANG)) return true;
+        }
+        return false;
     }
 }

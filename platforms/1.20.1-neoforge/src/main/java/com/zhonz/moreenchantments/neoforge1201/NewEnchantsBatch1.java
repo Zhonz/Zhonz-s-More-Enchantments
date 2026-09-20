@@ -298,6 +298,9 @@ public final class NewEnchantsBatch1 {
     public static void onLivingHurt(LivingHurtEvent event) {
         LivingEntity defender = event.getEntity();
         if (defender.level().isClientSide()) return;
+        // 缺陷修复(与 1.21.1 同步): 事件已被取消时(闪避成功 / 其他 mod 取消)这次伤害不会发生,
+        // 但原实现继续往下处理 —— 被闪避的伤害仍会进入终结(×100000)与收割(秒杀)。
+        if (event.isCanceled()) return;
         if (event.getAmount() <= 0) return;
         // 剥壳(shell_strip): 记录护甲前原始伤害(1.21 onLivingHurt 同相位写入 KEY_SHELL_STRIP_RAW,
         // 由 ForgeEventHandler1201 的攻击段 applyShellStrip 消费 → 真伤 = 被护甲减免的部分 × 比例)
@@ -404,6 +407,29 @@ public final class NewEnchantsBatch1 {
     // attacker instanceof Player 段; 结算数值在 ForgeEventHandler1201, 本类只做副作用)
     // ===================================================================
 
+    /**
+     * 文档 #75(ENCHANTMENTS.md L490):「装备者生命值**不会低于 1**」。
+     *
+     * <p>护甲前的 {@link #applyUnyieldingFateInvuln} 只把量压到 {@code health - 1}, 而护甲后
+     * 管线(ForgeEventHandler1201.onLivingDamage 的 {@code settleIncoming})还会乘
+     * {@code incoming_damage}(易伤 &gt; 1, 如燃烧的黄昏/海疆/惨白的午夜)—— 那次乘算能把
+     * 这条保命击穿, 于是"不会低于 1"的承诺在易伤叠加下失效。
+     *
+     * <p>因此用**最低优先级**在所有结算之后再兜一次底: 对穿着唯有命运的受击者,
+     * 把最终伤害钳到 {@code health - 1}(生命已是 1 时钳到 0, 即本次伤害不再致命)。
+     * 对应 1.21.1 {@code ModEventHandlers.enforceUnyieldingFateFloor(LivingDamageEvent.Pre @LOWEST)}。
+     */
+    @SubscribeEvent(priority = net.minecraftforge.eventbus.api.EventPriority.LOWEST)
+    public static void enforceUnyieldingFateFloor(LivingDamageEvent event) {
+        LivingEntity defender = event.getEntity();
+        if (defender.level().isClientSide()) return;
+        if (!wearsUnyieldingFate(defender)) return;
+        float floor = Math.max(0.0F, defender.getHealth() - 1.0F);
+        if (event.getAmount() > floor) {
+            event.setAmount(floor);
+        }
+    }
+
     @SubscribeEvent
     public static void onLivingDamage(LivingDamageEvent event) {
         LivingEntity defender = event.getEntity();
@@ -440,11 +466,12 @@ public final class NewEnchantsBatch1 {
     }
 
     /** 84. 粉碎叠层(1.21 源函数: ModEventHandlers#gainShatterStack):
-     *  每次攻击 +1 层(上限 10), 刷新 5 秒计时; 实际效果(PROT_PIERCE +4%/层)由 tickShatter 写入。 */
+     *  每次攻击 +1 层(无上限), 刷新 5 秒计时; 实际效果(PROT_PIERCE +4%/层)由 tickShatter 写入。
+     *  用户裁定(2026-09): 文档 README L744 只说「可叠加, 每次叠加重置时间」, 未给上限 ——
+     *  原实现硬顶 10 层, 与文档不符, 已移除。 */
     private static void gainShatterStack(Player player, CompoundTag data, int tickCount) {
         if (mainHand(player, EnchantIds.SHATTER) <= 0) return;
         int stacks = data.getInt(KEY_SHATTER_STACKS) + 1;
-        if (stacks > 10) stacks = 10;
         data.putInt(KEY_SHATTER_STACKS, stacks);
         data.putInt(KEY_SHATTER_LAST, tickCount);
     }
@@ -473,7 +500,10 @@ public final class NewEnchantsBatch1 {
             duration = Math.max(10, prev / 2);
         }
         if (RANDOM.nextFloat() < 0.25f) {
-            atkData.putLong(KEY_CHAIN_UNTIL, now + duration);
+            // 文档 #88(ENCHANTMENTS.md L583):「触发间隔不超过 10 秒(200 tick)」—— 比较基准必须是
+            // **上次触发 tick**(本键注释即"上次触发"); 旧实现写入的是到期时刻 now+duration,
+            // 于是"间隔"被本次时长污染(60 tick 时长会把判定窗口实际放宽到 260 tick)。
+            atkData.putLong(KEY_CHAIN_UNTIL, now);
             atkData.putInt(KEY_CHAIN_PREV_DURATION, duration);
             defender.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, duration, 6));
             defender.addEffect(new MobEffectInstance(MobEffects.DIG_SLOWDOWN, duration, 6));
@@ -496,7 +526,7 @@ public final class NewEnchantsBatch1 {
         // 1) 血路: 记录击杀(任意击杀者, 供 computeBonusPercent 读 kills)
         SideEffectsBatch1.recordBloodPathKill(source, victim);
         // 2) 保命附魔(victim 侧, 命中即取消死亡并 return):
-        //    智能图腾(背包图腾自动使用) → 永劫回归(满血复活+6000tick 冷却) → 神圣守护(四甲槽保命)
+        //    智能图腾(背包图腾自动使用) → 永劫回归(满血复活, 文档无冷却条款) → 神圣守护(四甲槽保命)
         if (SideEffectsBatch1.trySmartTotem(victim, event)) return;
         if (SideEffectsBatch1.tryReturnFromHell(victim, event)) return;
         SideEffectsBatch1.tryDivineProtection(victim, event);
@@ -558,11 +588,11 @@ public final class NewEnchantsBatch1 {
         if (hand.isEmpty()) return;
         BlockPos pos = event.getPos();
         if (pos == null) return;
-        // 87. 三千万转: 带附魔的下界之星右键已放置的龙蛋 → 获得永劫回归附魔书(不消耗星)
+        // 87. 三千万转: 带附魔的下界之星右键已放置的龙蛋 → 成功生成永劫回归附魔书后消耗材料
         if (hand.getItem() == Items.NETHER_STAR
                 && enchantLevel(hand, EnchantIds.THIRTY_MILLION_TURNS) > 0
                 && player.level().getBlockState(pos).is(Blocks.DRAGON_EGG)) {
-            tryThirtyMillionTurns(player);
+            tryThirtyMillionTurns(player, hand, pos);
             event.setCanceled(true);
             event.setUseBlock(Event.Result.DENY);
             event.setUseItem(Event.Result.DENY);
@@ -573,14 +603,21 @@ public final class NewEnchantsBatch1 {
     }
 
     /** 87. 三千万转核心(1.21 源函数: ModEventHandlers#onThirtyMillionTurns)。 */
-    private static void tryThirtyMillionTurns(Player player) {
+    private static void tryThirtyMillionTurns(Player player, ItemStack star, BlockPos pos) {
         // 永劫回归附魔书(1.20.1: EnchantedBookItem.createForEnchantment + STORED_ENCHANTMENTS)
         net.minecraft.world.item.enchantment.Enchantment ench = ForgeRegistries.ENCHANTMENTS.getValue(
                 new ResourceLocation(CommonConstants1201.MODID, EnchantIds.ETERNAL_RETURN));
         if (ench == null) return;
         ItemStack book = EnchantedBookItem.createForEnchantment(new EnchantmentInstance(ench, 1));
-        // 与 1.21 placeItemBackInInventory 同语义: 入背包, 满了掉在脚下(不消耗星)
-        player.getInventory().placeItemBackInInventory(book);
-        player.getPersistentData().putLong(KEY_TURNS_CD, player.level().getGameTime());
+        // 文档 #87(ENCHANTMENTS.md L573-574):「**成功生成**附魔书后, 被附魔的下界之星与被右键的
+        // 龙蛋都会消耗掉」。判据取"附魔书**确实进入了背包**"(Inventory.add 返回 true);
+        // 背包满 → 不给产物也不消耗材料(旧实现无条件消耗并把书掉在脚下, 与文档不符)。
+        if (!player.getInventory().add(book)) {
+            return;
+        }
+        star.shrink(1);
+        if (player.level() instanceof net.minecraft.server.level.ServerLevel sl) {
+            sl.destroyBlock(pos, false); // drop=false: 龙蛋是被"使用"掉的, 不是被挖掉的
+        }
     }
 }

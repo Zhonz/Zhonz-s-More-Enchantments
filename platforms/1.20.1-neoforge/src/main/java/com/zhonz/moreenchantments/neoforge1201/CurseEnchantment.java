@@ -30,4 +30,12 @@ public abstract class CurseEnchantment extends Enchantment {
     public boolean isCurse() {
         return true;
     }
+    /**
+     * 诅咒同时属于"宝藏" —— 与原版一致(1.21 的 #minecraft:treasure 里就含
+     * binding_curse / vanishing_curse)。1.20.1 无附魔标签, 只能覆写表达。
+     */
+    @Override
+    public boolean isTreasureOnly() {
+        return true;
+    }
 }

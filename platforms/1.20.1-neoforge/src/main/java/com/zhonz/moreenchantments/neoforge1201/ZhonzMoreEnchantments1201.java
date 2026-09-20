@@ -27,8 +27,11 @@ public class ZhonzMoreEnchantments1201 {
         ZhonzAttributes1201.ATTRIBUTES.register(modBus);
         modBus.addListener(ZhonzMoreEnchantments1201::addAttributesToAllLiving);
 
-        // 自定义伤害类型注册(weeping_fire / frost / true_damage; 对应 1.21 的 data/damage_type)
-        DamageTypes1201.DAMAGE_TYPES.register(modBus);
+        // 自定义伤害类型(weeping_fire / frost / true_damage): 与 1.21 一样**纯数据包驱动**,
+        // 条目来自 resources/data/zhonz_more_enchantments/damage_type/*.json。
+        // 注意: 1.20.1 的 minecraft:damage_type 不在 Forge 的 GameData 中, **不能**用
+        // DeferredRegister 注册(会抛 "Unable to find registry with key minecraft:damage_type"
+        // 导致服务端启动失败); 键见 DamageTypes1201。
 
         // 附魔代码注册(1.20.1 为代码注册, 见 ModEnchantments1201)
         ModEnchantments1201.ENCHANTMENTS.register(modBus);

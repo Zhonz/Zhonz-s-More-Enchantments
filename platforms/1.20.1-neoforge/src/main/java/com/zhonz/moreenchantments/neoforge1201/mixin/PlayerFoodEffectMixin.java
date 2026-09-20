@@ -21,8 +21,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * (When eating rotten flesh and other foods that give the Hunger effect,
  * the player no longer gains the Hunger effect.)
  *
- * Implementation: Intercept canBeAffected for Hunger/Poison/Confusion effects
- * and cancel it if the player has Scavenger on the head slot.
+ * Implementation: Intercept canBeAffected for the Hunger effect and cancel it
+ * if the player has Scavenger on the head slot.
+ *
+ * 文档 #2(README.md:42 / ENCHANTMENTS.md:23-25)只授权屏蔽"饥饿" —— 原先一并屏蔽的
+ * POISON/CONFUSION 属未授权, 已删(与 1.21.1 主工程一致)。
  *
  * 1.20.1 移植差异: 目标方法 canBeAffected(MobEffectInstance) 在 1.20.1 同样存在
  * 且被 addEffect(MobEffectInstance, Entity) 调用(字节码已核实), 可注入。
@@ -45,8 +48,9 @@ public class PlayerFoodEffectMixin {
         int scavengerLevel = EnchantmentLookup1201.INSTANCE.slot(player, EnchantIds.SCAVENGER, EquipmentSlot.HEAD);
         if (scavengerLevel <= 0) return;
 
+        // 只屏蔽"饥饿"(文档 #2 唯一授权项); 中毒/反胃原为过度屏蔽, 已按文档移除。
         MobEffect effect = effectInstance.getEffect();
-        if (effect == MobEffects.HUNGER || effect == MobEffects.POISON || effect == MobEffects.CONFUSION) {
+        if (effect == MobEffects.HUNGER) {
             cir.setReturnValue(false);
         }
     }

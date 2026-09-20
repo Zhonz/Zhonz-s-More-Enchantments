@@ -31,8 +31,8 @@ import java.util.UUID;
  * <p>覆盖项(1.21 源函数 → 本类方法):
  * <ol>
  *   <li>{@code tickCooldownsAndCleanup(L2448)} → {@link #tickCooldownsAndCleanup}
- *       —— <b>必须</b>: 永劫回归 KEY_RETURN_FROM_HELL_CD(6000 tick)只在此递减,
- *       缺失则冷却永不归零 → 该附魔只能触发一次。</li>
+ *       —— 递减残余冷却并清理过期标记。永劫回归的 6000 tick 冷却已按文档删除
+ *       (文档 #24 无任何冷却条款, 见 SideEffectsBatch1#tryReturnFromHell)。</li>
  *   <li>{@code tickCorneredBeast(L1287)} 的治疗 +50% 部分 → {@link #tickCorneredBeast}
  *       (加伤 +60% 已由 ForgeEventHandler1201.onPlayerTick 经 TickBonusRules 处理, 本类不重复)。</li>
  *   <li>{@code tickSupremeArt(L2133)} 的属性部分 → {@link #tickSupremeArt}
@@ -83,7 +83,6 @@ public final class TickSideBatch1 {
     private static final String KEY_FOOLS_MASK_LUCKY = "zhonz_fools_mask_lucky";
     private static final String KEY_FOOLS_MASK_CHANGE_TICK = "zhonz_fools_mask_change_tick";
     private static final String KEY_EMERGENCY_RESCUE_CD = "zhonz_emergency_rescue_cd";
-    private static final String KEY_RETURN_FROM_HELL_CD = "zhonz_return_from_hell_cd";
     private static final String KEY_MUST_OPEN_PATH_CD = "zhonz_must_open_path_cd";
     private static final String KEY_GRIEVOUS_WOUND_UNTIL = "zhonz_grievous_wound_until";
     private static final String KEY_BURNING_DUSK_PCT = "zhonz_burning_dusk_pct";
@@ -92,8 +91,6 @@ public final class TickSideBatch1 {
     private static final String KEY_FLIPPING_COIN_ATTACK_STACKS = "zhonz_flipping_coin_attack_stacks";
     /** 爆裂黎明"装填中"标志(与 1.21 ModEventHandlers L96 同值; 写入侧在 SideEffectsBatch1)。 */
     private static final String KEY_EXPLOSIVE_DAWN_RELOADING = "zhonz_explosive_dawn_reloading";
-    /** 剥壳逐攻击者百分比键前缀(1.21 同: "zhonz_shell_strip_percent_")。 */
-    private static final String SHELL_STRIP_PREFIX = "zhonz_shell_strip_percent_";
 
     // ===== Attribute Modifier ids(与 1.21 ModEventHandlers 的 rl(...) 路径一致)=====
     private static final ResourceLocation CORNERED_HEALING_MODIFIER = rl("cornered_beast_healing");
@@ -383,15 +380,11 @@ public final class TickSideBatch1 {
     // 冷却递减 + 过期标记清理
     // (1.21 源函数: ModEventHandlers#tickCooldownsAndCleanup L2448-2489)
     //
-    // 【必须项】永劫回归 return_from_hell 的 6000 tick 冷却只在此递减 —— 缺失则永不归零,
-    // 该附魔只能触发一次(1.20.1 SideEffectsBatch1 写入 KEY_RETURN_FROM_HELL_CD, 本方法递减)。
-    //
     // 守卫说明: 本方法是纯簿记(递减 / 清理), 与 1.21 一致地无条件执行 ——
     // 若加附魔守卫, 玩家卸下附魔后冷却会永久冻结, 语义反而错误。
     // ===================================================================
     public static void tickCooldownsAndCleanup(Player player, CompoundTag data, int tickCount) {
         tickCooldown(data, KEY_EMERGENCY_RESCUE_CD);
-        tickCooldown(data, KEY_RETURN_FROM_HELL_CD);
         tickCooldown(data, KEY_MUST_OPEN_PATH_CD);
 
         // 重伤(Grievous Wound)易伤窗口过期
@@ -412,15 +405,6 @@ public final class TickSideBatch1 {
         if (entityData.contains(KEY_PALE_VULN_UNTIL)
                 && player.level().getGameTime() >= entityData.getLong(KEY_PALE_VULN_UNTIL)) {
             entityData.remove(KEY_PALE_VULN_UNTIL);
-        }
-
-        // 周期性丢弃过期的"逐攻击者剥壳百分比"键
-        if (tickCount % 100 == 0) {
-            for (String key : new ArrayList<>(entityData.getAllKeys())) {
-                if (key.startsWith(SHELL_STRIP_PREFIX)) {
-                    entityData.remove(key);
-                }
-            }
         }
 
         // 硬币叠层在玩家死亡时重置(1.21: 死亡事件亦处理, 此处兜底)

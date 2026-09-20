@@ -96,6 +96,8 @@ public final class AttackSideBatch1 {
     private static final String KEY_COUNTDOWN_DAMAGE = "zhonz_final_countdown_damage";
     /** 1.21: KEY_MY_SEA_DOMAIN_START(L75); 由 ForgeEventHandler1201.incomingConditionalFactor 消费。 */
     private static final String KEY_MY_SEA_DOMAIN_START = "zhonz_my_sea_domain_start";
+    /** README L128 我的海疆: "可被重复添加刷新效果时间"用的到期时刻(爬升基准 START 不重置)。 */
+    private static final String KEY_MY_SEA_DOMAIN_UNTIL = "zhonz_my_sea_domain_until";
     /** 1.21: KEY_BONE_BREAK_SWITCH_TICK(L93)。 */
     private static final String KEY_BONE_BREAK_SWITCH_TICK = "zhonz_bone_break_switch_tick";
 
@@ -108,8 +110,7 @@ public final class AttackSideBatch1 {
     private static final String KEY_FOREKNOWLEDGE_DODGE_APPLIED = "zhonz_foreknowledge_dodge_applied";
     /** 1.21: FOREKNOWLEDGE_DODGE_MODIFIER(L170)。 */
     private static final ResourceLocation FOREKNOWLEDGE_DODGE_MODIFIER = rl("foreknowledge_dodge");
-    /** 1.21: 闪避概率上下限与恢复速率(L465/L475)。 */
-    private static final float FOREK_MIN_PROB = 0.05F;
+    /** 1.21: 闪避概率上限与恢复速率(L465/L475)。 */
     private static final float FOREK_MAX_PROB = 0.80F;
     private static final float FOREK_FAIL_PENALTY = 0.10F;
     private static final float FOREK_RECOVER_PER_TICK = 0.0005F;
@@ -190,6 +191,9 @@ public final class AttackSideBatch1 {
     public static void onLivingHurt(LivingHurtEvent event) {
         LivingEntity defender = event.getEntity();
         if (defender.level().isClientSide()) return;
+        // 缺陷修复(与 1.21.1 同步): 事件已被取消时(闪避成功 / 其他 mod 取消)这次伤害不会发生,
+        // 但原实现继续往下处理 —— 被闪避的伤害仍会进入终结(×100000)与收割(秒杀)。
+        if (event.isCanceled()) return;
         float rawDamage = event.getAmount();
         if (rawDamage <= 0.0F) return;
         DamageSource source = event.getSource();
@@ -219,10 +223,10 @@ public final class AttackSideBatch1 {
      * DODGE_CHANCE 并取消事件。因此本方法:
      * <ol>
      *   <li>头盔带该附魔 → 记录战斗 tick(阻止脱战恢复);</li>
-     *   <li>事件已被取消(= Apothic 判定闪避成功)→ 按设计向随机方向位移 1/4 格, 返回 true;</li>
+     *   <li>事件已被取消(= Apothic 判定闪避成功)→ 按文档向左/后/右/左后/右后之一位移 1/4 格, 返回 true;</li>
      *   <li>事件未被取消 → 用 {@code AttributeEvents.isDodging} 兜底(兼容事件注册顺序差异),
      *       若该 tick 判定为闪避则自行取消事件 + 位移;</li>
-     *   <li>闪避失败 → 概率 -10%(下限 0.05), 下次 tick 重新同步到 DODGE_CHANCE。</li>
+     *   <li>闪避失败 → 概率 -10%(文档未给下限: 80% 起第 8 次即 0%), 下次 tick 重新同步到 DODGE_CHANCE。</li>
      * </ol>
      *
      * @return true = 已闪避(调用方须 return, 不再执行受击累积)
@@ -254,7 +258,9 @@ public final class AttackSideBatch1 {
         // 闪避失败: 概率 -10%, 下次 tick 同步到 DODGE_CHANCE 修饰
         float prob = data.contains(KEY_FOREKNOWLEDGE_DODGE)
                 ? data.getFloat(KEY_FOREKNOWLEDGE_DODGE) : FOREK_MAX_PROB;
-        float newProb = Math.max(FOREK_MIN_PROB, prob - FOREK_FAIL_PENALTY);
+        // 文档 #33(README.md:322 / ENCHANTMENTS.md:195):「每次闪避失败降低 10% 的闪避概率」,
+        // 文档未给下限 —— 80% 起算第 8 次即 0%。原实现钳 5% 下限与文档不符, 现只钳概率自身的下界 0。
+        float newProb = Math.max(0.0F, prob - FOREK_FAIL_PENALTY);
         data.putFloat(KEY_FOREKNOWLEDGE_DODGE, newProb);
         data.putFloat(KEY_FOREKNOWLEDGE_DODGE_APPLIED, -1.0F); // 强制下次 tick 重新同步
         if (LOGGER.isDebugEnabled()) {
@@ -265,11 +271,21 @@ public final class AttackSideBatch1 {
         return false;
     }
 
-    /** 闪避成功: 按设计向随机方向位移 1/4 格(1.21 源 L443-445)。 */
+    /**
+     * 闪避成功: 位移 1/4 格(1.21 源 L443-445 / ModEventHandlers#displaceForeknowledgeEyeDodge)。
+     *
+     * <p>文档 #33(README.md:322 / ENCHANTMENTS.md:195):「受到攻击前向**左/后/右/左后/右后**移动
+     * **1/4 格**」。原实现取随机 360° 角度(可能朝攻击者方向位移), 与文档列出的 5 个方向不符。
+     *
+     * <p>下表为相对受击者视线的偏航偏移; MC 约定 yaw 0 = 朝 +Z, 位移向量 = (-sin yaw, cos yaw),
+     * 因此 左 = -90°、后 = 180°、右 = +90°、左后 = -135°、右后 = +135°。
+     */
     private static void dodgeTeleport(LivingEntity defender) {
-        float angle = RANDOM.nextFloat() * 2.0F * (float) Math.PI;
-        defender.teleportTo(defender.getX() + Math.cos(angle) * 0.25, defender.getY(),
-                defender.getZ() + Math.sin(angle) * 0.25);
+        final float[] docDirections = {-90.0F, 180.0F, 90.0F, -135.0F, 135.0F}; // 左/后/右/左后/右后
+        double rad = Math.toRadians(defender.getYRot() + docDirections[RANDOM.nextInt(docDirections.length)]);
+        defender.teleportTo(defender.getX() - Math.sin(rad) * 0.25,
+                defender.getY(),
+                defender.getZ() + Math.cos(rad) * 0.25);
     }
 
     /**
@@ -592,14 +608,26 @@ public final class AttackSideBatch1 {
     /**
      * 11. 我的海疆标记(1.21 源: ModEventHandlers#applyMySeaDomainMark L728-732)。
      *
-     * <p>主手带该附魔且手持三叉戟 → 在目标数据写入 "zhonz_my_sea_domain_start" = 当前 gameTime;
-     * 受击侧易伤(+30%~60%, 1200 tick 内)由
+     * <p>主手带该附魔且手持三叉戟 → 在目标数据写入 "zhonz_my_sea_domain_start" = **首次**命中 gameTime;
+     * 受击侧易伤(+30%~60%, 400 tick 内)由
      * {@link ForgeEventHandler1201#incomingConditionalFactor} 读同一键实现。
+     *
+     * <p>README.md L128:「可被重复添加**刷新效果时间**」—— 重复命中只把到期时刻
+     * ("zhonz_my_sea_domain_until")往后推, **不重置**易伤爬升基准 START; 否则易伤永远停在
+     * +30%, 与"时间越长伤害增加越高, 最多 30 秒增加到 60%"矛盾。
+     *
+     * <p>用户裁定(2026-09): 每段刷新窗口 = **20 秒(400 tick)**。窗口是"刷新"语义而非硬性上限 ——
+     * 只要持续命中就不断续期, 爬升可一路走到 30 秒的 60% 峰值; 停手 20 秒不命中标记才过期。
      */
     public static void applyMySeaDomainMark(LivingEntity attacker, LivingEntity defender) {
         if (mainHand(attacker, EnchantIds.MY_SEA_DOMAIN) <= 0) return;
         if (attacker.getMainHandItem().getItem() != Items.TRIDENT) return;
-        edata(defender).putLong(KEY_MY_SEA_DOMAIN_START, defender.level().getGameTime());
+        CompoundTag d = edata(defender);
+        long now = defender.level().getGameTime();
+        if (!d.contains(KEY_MY_SEA_DOMAIN_START)) {
+            d.putLong(KEY_MY_SEA_DOMAIN_START, now); // 爬升基准: 只在首次命中写入
+        }
+        d.putLong(KEY_MY_SEA_DOMAIN_UNTIL, now + 400); // 刷新窗口 20 秒(README L128); 不重置爬升
     }
 
     // ===================================================================

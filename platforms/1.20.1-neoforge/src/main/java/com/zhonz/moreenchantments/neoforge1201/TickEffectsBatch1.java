@@ -1,6 +1,7 @@
 package com.zhonz.moreenchantments.neoforge1201;
 
 import com.zhonz.moreenchantments.common.damage.EnchantSetPieces;
+import com.zhonz.moreenchantments.common.damage.UnifiedDamageEngine;
 import com.zhonz.moreenchantments.common.enchant.EnchantIds;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -54,6 +55,7 @@ public final class TickEffectsBatch1 {
     private static final ResourceLocation FLEET_FOOTSTEPS_STEP_MODIFIER = rl("fleet_footsteps_step");
     private static final ResourceLocation APEX_DODGE_MODIFIER = rl("apex_dodge");
     private static final ResourceLocation APEX_DAMAGE_MODIFIER = rl("apex_damage");
+    private static final ResourceLocation APEX_MOVEMENT_MODIFIER = rl("apex_movement");
     private static final ResourceLocation VIOLENT_ATTACK_SPEED_MODIFIER = rl("violent_pulse_attack_speed");
     private static final ResourceLocation VIOLENT_MOVEMENT_MODIFIER = rl("violent_pulse_movement");
     private static final ResourceLocation SELF_BOUND_STEP_MODIFIER = rl("self_bound_step");
@@ -188,9 +190,10 @@ public final class TickEffectsBatch1 {
     // ===================================================================
     // 45. 顶点 apex(1.21 源函数: ModEventHandlers#tickApex)
     //
-    // 属性部分: 主手/副手持有 → 闪避 DODGE_CHANCE +0.20(ADD)、ATTACK_DAMAGE ×(1+5)(MULT_TOTAL)。
-    // 受伤 -60%(×0.4)已补齐: 1.20.1 走 incoming_damage 通道, 见
-    // ForgeEventHandler1201.refreshIncomingAggregate1201(等价 1.21 applyApexIncoming)。
+    // 属性部分: 主手/副手持有 → 闪避 DODGE_CHANCE +1.00(ADD)、移速 ×(1+1.0)(MULT_BASE);
+    // 增伤走本模组独立乘区 bonus_damage +10.0(×(1+10) = ×11)。
+    // 数值已按 1.21.1 主工程 + README.md:430「闪避率增加 100% / 造成伤害增加 1000% /
+    // 移动速度增加 100%」对齐(1.20.1 原为闪避 +0.20、增伤 +5.0(×6)、且无移速项)。
     // ===================================================================
     public static void tickApex(Player player, CompoundTag data) {
         int level = isHoldingApex(player) ? 1 : 0;
@@ -198,9 +201,16 @@ public final class TickEffectsBatch1 {
         if (level == last) return;
         data.putInt(KEY_APEX_LAST, level);
         setTransient(player, ALObjects.Attributes.DODGE_CHANCE.get(), APEX_DODGE_MODIFIER,
-                level > 0 ? 0.20 : 0, ADD);
-        setTransient(player, Attributes.ATTACK_DAMAGE, APEX_DAMAGE_MODIFIER,
-                level > 0 ? 5.0 : 0, MULT_TOTAL);
+                level > 0 ? 1.00 : 0, ADD);
+        // README.md:430「造成伤害增加 1000%」→ 本模组独立乘区 bonus_damage, 不再写共享的
+        // ATTACK_DAMAGE(属性面板与其他 mod 伤害管线都会读它; README.md:7「增伤效果只参与
+        // 最后的伤害判定, 从而兼容其他 mod 的武器、装备」)。增伤在
+        // ForgeEventHandler1201.settle 处恰好作用一次。
+        UnifiedDamageEngine.addPercentBonus(
+                player.getAttribute(ZhonzAttributes1201.BONUS_DAMAGE.get()),
+                APEX_DAMAGE_MODIFIER, level > 0 ? 10.0 : 0);
+        setTransient(player, Attributes.MOVEMENT_SPEED, APEX_MOVEMENT_MODIFIER,
+                level > 0 ? 1.0 : 0, MULT_BASE);
     }
 
     private static boolean isHoldingApex(Player player) {
@@ -247,7 +257,7 @@ public final class TickEffectsBatch1 {
 
     // ===================================================================
     // 51. 自缚者 self_bound(1.21 源函数: ModEventHandlers#tickSelfBound)
-    // 护腿(诅咒): 台阶 -1(ADD)、攻击伤害 ×(1-0.9)(MULT_TOTAL)、移速 ×(1-0.5)(MULT_BASE)。
+    // 护腿(诅咒): 台阶 -1(ADD)、造成伤害 -90% 走独立乘区 bonus_damage(×(1-0.9))、移速 ×(1-0.5)(MULT_BASE)。
     // 台阶属性 1.20.1 用 ForgeMod.STEP_HEIGHT_ADDITION(见 tickFleetFootsteps 注)。
     // ===================================================================
     public static void tickSelfBound(Player player, CompoundTag data) {
@@ -257,8 +267,10 @@ public final class TickEffectsBatch1 {
         data.putInt(KEY_SELF_BOUND_LAST, level);
         setTransient(player, ForgeMod.STEP_HEIGHT_ADDITION.get(), SELF_BOUND_STEP_MODIFIER,
                 level > 0 ? -1 : 0, ADD);
-        setTransient(player, Attributes.ATTACK_DAMAGE, SELF_BOUND_DAMAGE_MODIFIER,
-                level > 0 ? -0.9 : 0, MULT_TOTAL);
+        // README.md:476「造成伤害减 90%」→ 独立乘区 bonus_damage -0.9(×0.1), 与旧 MULT_TOTAL -0.9 等价。
+        UnifiedDamageEngine.addPercentBonus(
+                player.getAttribute(ZhonzAttributes1201.BONUS_DAMAGE.get()),
+                SELF_BOUND_DAMAGE_MODIFIER, level > 0 ? -0.9 : 0);
         setTransient(player, Attributes.MOVEMENT_SPEED, SELF_BOUND_MOVEMENT_MODIFIER,
                 level > 0 ? -0.5 : 0, MULT_BASE);
     }
@@ -281,7 +293,7 @@ public final class TickEffectsBatch1 {
 
     // ===================================================================
     // 53. 加速的未来 accelerated_future(1.21 源函数: ModEventHandlers#tickAcceleratedFuture)
-    // 头盔: 攻击伤害 ×(1+闪避率×2)(MULT_TOTAL)、攻速 ×(1+闪避率)(MULT_BASE),
+    // 头盔: 增伤走独立乘区 bonus_damage(闪避率×2 => ×(1+闪避率×2))、攻速 ×(1+闪避率)(MULT_BASE),
     // 每次闪避率变化时重写(阈值 0.001)。
     // ===================================================================
     public static void tickAcceleratedFuture(Player player, CompoundTag data) {
@@ -289,7 +301,9 @@ public final class TickEffectsBatch1 {
         double dodge = player.getAttributeValue(ALObjects.Attributes.DODGE_CHANCE.get());
         if (level <= 0) {
             if (data.getFloat(KEY_ACCELERATED_LAST_DODGE) > 0) {
-                setTransient(player, Attributes.ATTACK_DAMAGE, ACCELERATED_DAMAGE_MODIFIER, 0, MULT_TOTAL);
+                UnifiedDamageEngine.addPercentBonus(
+                        player.getAttribute(ZhonzAttributes1201.BONUS_DAMAGE.get()),
+                        ACCELERATED_DAMAGE_MODIFIER, 0);
                 setTransient(player, Attributes.ATTACK_SPEED, ACCELERATED_ATTACK_SPEED_MODIFIER, 0, MULT_BASE);
                 data.putFloat(KEY_ACCELERATED_LAST_DODGE, 0);
             }
@@ -298,8 +312,10 @@ public final class TickEffectsBatch1 {
         float lastDodge = data.getFloat(KEY_ACCELERATED_LAST_DODGE);
         if (Math.abs(lastDodge - dodge) < 0.001f) return;
         data.putFloat(KEY_ACCELERATED_LAST_DODGE, (float) dodge);
-        setTransient(player, Attributes.ATTACK_DAMAGE, ACCELERATED_DAMAGE_MODIFIER,
-                dodge * 2.0, MULT_TOTAL);
+        // README.md:490「造成伤害时增伤等同于闪避率 × 2」→ bonus_damage(×(1+闪避率×2), 与旧 MULT_TOTAL 等价)
+        UnifiedDamageEngine.addPercentBonus(
+                player.getAttribute(ZhonzAttributes1201.BONUS_DAMAGE.get()),
+                ACCELERATED_DAMAGE_MODIFIER, dodge * 2.0);
         setTransient(player, Attributes.ATTACK_SPEED, ACCELERATED_ATTACK_SPEED_MODIFIER,
                 dodge, MULT_BASE);
     }
@@ -326,6 +342,9 @@ public final class TickEffectsBatch1 {
                     mult, MULT_TOTAL);
             setTransient(player, ForgeMod.BLOCK_REACH.get(), DIVINE_CURSE_BLOCK_RANGE_MODIFIER,
                     mult, MULT_TOTAL);
+            // 神咒保留在 ATTACK_DAMAGE 上(唯一保留的伤害类诅咒): README.md:276 / ENCHANTMENTS.md:167 写的是
+            // 「**攻击伤害**...减半」, ENCHANTMENTS.md:638 跨版本属性表也明列 `attack_damage` -50% --
+            // 文档指定的是"攻击伤害属性本身", 不是 apex/自缚者那种「造成伤害」乘区, 故按文档保留。
             setTransient(player, Attributes.ATTACK_DAMAGE, DIVINE_CURSE_DAMAGE_MODIFIER,
                     mult, MULT_TOTAL);
             setTransient(player, Attributes.ATTACK_SPEED, DIVINE_CURSE_ATTACK_SPEED_MODIFIER,
@@ -352,7 +371,7 @@ public final class TickEffectsBatch1 {
 
     // ===================================================================
     // 58. 苦难原色 primal_suffering(1.21 源函数: ModEventHandlers#tickPrimalSuffering)
-    // 任何槽位: 对攻速/移速/挖掘/蓄力属性, 若当前值低于基础值则补回差额×2(MULT_BASE)。
+    // 任何槽位: 对攻速/移速/挖掘/蓄力属性, 若当前值低于基础值则补回差额×2(ADDITION, 绝对增量)。
     // ===================================================================
     public static void tickPrimalSuffering(Player player, CompoundTag data) {
         int level = anySlot(player, EnchantIds.PRIMAL_SUFFERING);
@@ -380,7 +399,10 @@ public final class TickEffectsBatch1 {
         double current = instance.getValue();
         double deficit = base - current;
         if (deficit > 0.01) {
-            setTransient(player, attr, id, deficit * 2.0, MULT_BASE);
+            // 文档 #58(ENCHANTMENTS.md L380):「获得**被减免值 ×2** 的对应增益」—— 绝对增量,
+            // 不是乘算: base 4.0 被减到 3.0, deficit=1.0 → 3.0 + 1.0×2 = 5.0。
+            // 原实现 MULT_BASE → 4.0×(1+2.0)=12.0, 量纲错配放大 6 倍(与 1.21 的 ADD_VALUE 对齐)。
+            setTransient(player, attr, id, deficit * 2.0, ADD);
         } else {
             removeModifier(player, attr, id);
         }
@@ -389,12 +411,16 @@ public final class TickEffectsBatch1 {
     // ===================================================================
     // 60. 奢侈的希望 luxurious_hope —— tick 属性部分
     // (1.21 源函数: ModEventHandlers#tickLuxuriousHope)
-    // 任何槽位: 护甲穿透 ARMOR_PIERCE +0.5(ADD)、幸运 LUCK +0.2(ADD)。
-    // 满血受伤 +50%(×1.5)已补齐: 1.20.1 走 incoming_damage 通道, 见
+    // **低于满血**的任意槽位: 护甲穿透 ARMOR_PIERCE +0.5(ADD)、幸运 LUCK +0.2(ADD);
+    // 满血(health >= maxHealth)受伤 +50%(×1.5)已补齐: 1.20.1 走 incoming_damage 通道, 见
     // ForgeEventHandler1201.refreshIncomingAggregate1201(等价 1.21 applyLuxuriousHopeIncoming)。
     // ===================================================================
     public static void tickLuxuriousHope(Player player, CompoundTag data) {
-        boolean active = anySlot(player, EnchantIds.LUXURIOUS_HOPE) > 0;
+        // 文档 #60(ENCHANTMENTS.md L404-405): 两档严格互补 —— 满血走"受伤 +50%"
+        // (ForgeEventHandler1201.refreshIncomingAggregate1201, 要求 health >= maxHealth),
+        // **低于满血**才获得 50% 护甲穿透 + 20% 幸运(与 1.21 tickLuxuriousHope 同判)。
+        boolean active = anySlot(player, EnchantIds.LUXURIOUS_HOPE) > 0
+                && player.getHealth() < player.getMaxHealth();
         int last = data.getInt(KEY_LUXURIOUS_LAST);
         int now = active ? 1 : 0;
         if (now == last) return;
@@ -504,7 +530,7 @@ public final class TickEffectsBatch1 {
     // 65-67. 暴击三件套 crit_weapons(1.21 源函数: ModEventHandlers#tickCritWeapons)
     // 沉默沉入沉渊(主手): 暴击率 CRIT_CHANCE = 最大生命×2%(组合×4%)(ADD)。
     // 狂热撕咬光芒(主手): 暴击伤害 CRIT_DAMAGE = 攻速(组合×2)(MULT_BASE)。
-    // 噤声击坠天堂(主手): 暴击伤害 = 暴击率(组合×2)(MULT_BASE); 增伤 ATTACK_DAMAGE ×(1+暴击率×组合倍率)(MULT_TOTAL)。
+    // 噤声击坠天堂(主手): 暴击伤害 = 暴击率(组合×2)(MULT_BASE); 增伤走独立乘区 bonus_damage(×(1+暴击率×组合倍率))。
     // ===================================================================
     public static void tickCritWeapons(Player player, CompoundTag data) {
         ItemStack weapon = player.getMainHandItem();
@@ -534,8 +560,11 @@ public final class TickEffectsBatch1 {
         double critDamage2 = heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_DAMAGE.get(), HEAVENFALL_CRIT_DAMAGE_MODIFIER,
                 critDamage2, MULT_BASE);
-        setTransient(player, Attributes.ATTACK_DAMAGE, HEAVENFALL_DAMAGE_MODIFIER,
-                heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0, MULT_TOTAL);
+        // README.md:602「获得等同于暴击率的...增伤」→ 独立乘区 bonus_damage(数值等价: ×(1+暴击率×(联动?2:1)))
+        UnifiedDamageEngine.addPercentBonus(
+                player.getAttribute(ZhonzAttributes1201.BONUS_DAMAGE.get()),
+                HEAVENFALL_DAMAGE_MODIFIER,
+                heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0);
     }
 
     // ===================================================================
@@ -629,6 +658,8 @@ public final class TickEffectsBatch1 {
             stacks = 0;
         }
         // 武器基础攻击力 +每层1
+        // README.md:686 / ENCHANTMENTS.md:512 明写「武器的**面板上的攻击力** +1」→ 文档要的就是属性面板
+        // 数值本身, 故这是唯一"故意共用 ATTACK_DAMAGE"的加伤, 不迁到独立乘区。
         setTransient(player, Attributes.ATTACK_DAMAGE, KEEN_WILL_ATTACK_MODIFIER, stacks, ADD);
     }
 

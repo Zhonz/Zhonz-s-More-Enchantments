@@ -42,7 +42,7 @@ import java.util.UUID;
  *   <li>攻击命中组(护甲结算后, 对应 1.20.1 {@code LivingDamageEvent}, 与 ForgeEventHandler1201.onLivingDamage 同相位):
  *       applySanction / recordShellStripRaw + applyShellStrip / applySelfDoubt / applyFlippingCoin /
  *       applyGrievousWound / applyAreaStrike / applyExplosiveDawn / applyWeepingChildIgnite /
- *       applyBurningDusk / applyHaltSlow / applyPaleMidnightMark / applyFoolsMaskSideEffects</li>
+ *       applyBurningDusk / applyHaltSlow / applyPaleMidnightMark (26 fools_mask 的攻击侧掷骰已删, 仅保留受击侧)</li>
  *   <li>防御/受击组(护甲结算前, 对应 1.20.1 {@code LivingHurtEvent} —— 1.21 的 LivingIncomingDamageEvent):
  *       recordShellStripRaw / applyBurningDuskVulnerability / applyPaleMidnightVulnerability / applyFoolsMaskOnHit</li>
  *   <li>死亡组({@code LivingDeathEvent}): recordBloodPathKill / trySmartTotem / tryReturnFromHell / tryDivineProtection</li>
@@ -61,7 +61,7 @@ import java.util.UUID;
  * <b>移植状态(round 9 起陆续补齐, 现全项已落地)</b>:
  * <ol>
  *   <li>my_sea_domain(11): <b>已补齐</b> —— 标记写入 {@link AttackSideBatch1#applyMySeaDomainMark},
- *       受击读取 ForgeEventHandler1201.incomingConditionalFactor(含 1200 tick 超时清理);
+ *       受击读取 ForgeEventHandler1201.incomingConditionalFactor(含 400 tick 刷新窗口清理);
  *       +60% 加成由 common computeBonusPercent 结算。{@link #applyMySeaDomainMarkTODOSkip}
  *       仅保留为文档对照, 不再被调用。</li>
  *   <li>explosive_dawn(9): <b>已补齐</b> —— 装填期无敌由
@@ -90,7 +90,6 @@ public final class SideEffectsBatch1 {
     private static final String KEY_PALE_VULN_UNTIL = "zhonz_pale_midnight_vuln_until";
     private static final String KEY_FOOLS_MASK_LUCKY = "zhonz_fools_mask_lucky";
     private static final String KEY_EXPLOSIVE_DAWN_RELOADING = "zhonz_explosive_dawn_reloading";
-    private static final String KEY_RETURN_FROM_HELL_CD = "zhonz_return_from_hell_cd";
     private static final String BLOOD_PATH_TAG = "zhonz_blood_path_kills"; // 武器 NBT CompoundTag, key = 生物类型 id, value = 击杀数
 
     // 属性 modifier 用 UUID(1.20.1 移除按 UUID; 名字串与 1.21 ResourceLocation 一致以便追溯)
@@ -140,12 +139,15 @@ public final class SideEffectsBatch1 {
     }
 
     /**
-     * 3(侧). 定身禁言(Suppression): 目标获得 6 秒(120 tick)缓慢 VI(amp 5), 并摧毁攻击者主手武器。
+     * 3(侧). 定身禁言(Suppression): 目标获得 6 秒(120 tick)**无法移动**, 并摧毁攻击者主手武器。
+     * 文档 #22(ENCHANTMENTS.md L133):「被攻击目标**无法移动** 6 秒;使用后武器损毁」。
+     * amp 5(Slowness VI = -90%)只是"几乎不能动"; 改为 amp 255 —— 原版把放大等级钳在
+     * [0,255], 移速属性被压到下限 0, 即真正意义上的无法移动(与 1.21.1 applySuppression 同口径)。
      * 1.21 源: {@code ModEventHandlers.applySuppression(L731)}。
      */
     public static void applySuppression(LivingEntity attacker, LivingEntity defender) {
         if (EnchantmentLookup1201.INSTANCE.mainHand(attacker, EnchantIds.SUPPRESSION) <= 0) return;
-        defender.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 120, 5));
+        defender.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 120, 255));
         attacker.getMainHandItem().setCount(0);
     }
 
@@ -298,7 +300,8 @@ public final class SideEffectsBatch1 {
 
     /**
      * 8. 范围打击(Area Strike): 远程武器(弓/弩/三叉戟)命中后对目标周围溅射 AoE 伤害。
-     * 半径 2+2×等级, 溅射比例 Lv1 30% / Lv2 40% / Lv3+ 55%, 随距离线性衰减, 用原版 hurt(与 1.21 相同)。
+     * 半径 2+2×等级, 溅射比例 Lv1 30% / Lv2 40% / Lv3+ 55%, 半径内统一取该比例(无距离衰减),
+     * 用原版 hurt(与 1.21 相同)。
      * 1.21 源: {@code ModEventHandlers.applyAreaStrike(L663)}。
      */
     public static void applyAreaStrike(LivingEntity attacker, LivingEntity defender, DamageSource source,
@@ -314,8 +317,9 @@ public final class SideEffectsBatch1 {
             if (nearby == defender || nearby == attacker || !nearby.isAlive() || !attacker.canAttack(nearby)) {
                 continue;
             }
-            float falloff = (float) Math.max(0, 1.0 - (nearby.distanceTo(defender) / radius));
-            nearby.hurt(source, aoeDamage * falloff);
+            // 文档 #12(README.md:138 / ENCHANTMENTS.md:82):「半径 2/4/6 格内受到 30%/40%/55% 伤害」,
+            // 未提距离衰减 —— 原实现乘以 falloff=1-dist/radius 使边缘趋近 0, 已删, 半径内统一 aoeDamage。
+            nearby.hurt(source, aoeDamage);
         }
     }
 
@@ -358,7 +362,7 @@ public final class SideEffectsBatch1 {
      * 且该附魔 +60% 加成已由 common EventDamageConditions.computeBonusPercent 在 1.20.1 通道结算。
      * 【已补齐】标记写入与受击读取已实现: {@link AttackSideBatch1#applyMySeaDomainMark}(写键, 由
      * ForgeEventHandler1201.onLivingDamage 攻击段调用) + ForgeEventHandler1201.incomingConditionalFactor
-     * (读键, 含 1200 tick 超时清理)。本方法仅保留为文档对照, 不再被调用。
+     * (读键, 含 400 tick 刷新窗口清理)。本方法仅保留为文档对照, 不再被调用。
      * 1.21 源: {@code ModEventHandlers.applyMySeaDomainMark(L657)} / applyMySeaDomainVulnerability(L1005)。
      */
     public static void applyMySeaDomainMarkTODOSkip(LivingEntity attacker, LivingEntity defender) {
@@ -457,27 +461,14 @@ public final class SideEffectsBatch1 {
     }
 
     /**
-     * 26(攻击侧). 假面的愚者(Fools Mask, 头盔): 攻击时按幸运标志给自己随机增益(buff)或减益(debuff)。
-     * (随机乘伤 ×(1~3)/×(0.01~1) 已由 common computeConditionalMultiplier 结算。)
-     * 1.21 源: {@code ModEventHandlers.applyFoolsMaskSideEffects(L761)}。
-     * 说明: 1.21 该函数用 EntityDataStorage.getData(弱引用表), 而幸运标志由 tickFoolsMask
-     * 写进玩家 persistent data —— 对玩家为不一致; 本移植统一用 getEntityData
-     * (玩家 persistent / 非玩家弱表), 与写入侧一致。
+     * 26. 假面的愚者: 佩戴者(头盔)**受到攻击时**获得随机增益(幸运)或减益(不幸)。
+     *
+     * <p>文档 #26(README.md:256-258 / ENCHANTMENTS.md:155-156)只说"受到攻击时", 未授权攻击时也掷;
+     * 攻击侧发放(原 applyFoolsMaskSideEffects)已删 —— 与 1.21.1 主工程
+     * {@code ModEventHandlers} L765-766 的处置一致。
      * 幸运翻转(KEY_FOOLS_MASK_CHANGE_TICK)已由 {@link TickSideBatch1#tickFoolsMask} 在玩家 tick 补齐。
-     */
-    public static void applyFoolsMaskSideEffects(LivingEntity attacker, LivingEntity defender) {
-        if (EnchantmentLookup1201.INSTANCE.slot(attacker, EnchantIds.FOOLS_MASK, EquipmentSlot.HEAD) <= 0) return;
-        CompoundTag data = edata(attacker);
-        if (data.getBoolean(KEY_FOOLS_MASK_LUCKY)) {
-            applyRandomBuff(attacker);
-        } else {
-            applyRandomDebuff(attacker);
-        }
-    }
-
-    /**
-     * 26(受击侧, 附赠, 与上同族). 假面的愚者: 佩戴者(头盔)受到攻击时获得随机增益(幸运)或减益(不幸)。
-     * 1.21 源: {@code ModEventHandlers.applyFoolsMaskOnHit(L772)}(1.21 挂在 LivingIncomingDamageEvent,
+     *
+     * <p>1.21 源: {@code ModEventHandlers.applyFoolsMaskOnHit(L772)}(1.21 挂在 LivingIncomingDamageEvent,
      * 1.20.1 等价挂 LivingHurtEvent)。
      */
     public static void applyFoolsMaskOnHit(LivingEntity defender) {
@@ -626,18 +617,15 @@ public final class SideEffectsBatch1 {
 
     /**
      * 永劫回归(Return From Hell, 任意槽位): 死亡时复活满血 + 清除效果 + 抗火/再生 15 秒,
-     * 鞋子耐久减半, 冷却 6000 tick(5 分钟, 存 KEY_RETURN_FROM_HELL_CD)。
-     * 返回 true = 已触发(调用方 return)。
-     * 冷却倒计时递减(tickCooldown)已由 {@link TickSideBatch1#tickCooldownsAndCleanup} 补齐
-     * —— 该键是 6000 tick 冷却唯一递减点。
+     * 鞋子耐久减半。返回 true = 已触发(调用方 return)。
+     *
+     * <p>文档 #24(README.md:236 / ENCHANTMENTS.md:143)只定义"受到致命伤害时抵消伤害并回满血",
+     * **没有任何冷却条款** —— 原实现附加的 6000 tick(5 分钟)冷却(常量 + 写入 + tick 递减)已删。
      * 1.21 源: {@code ModEventHandlers.tryReturnFromHell(L1977)}。
      */
     public static boolean tryReturnFromHell(LivingEntity entity, LivingDeathEvent event) {
         int returnFromHellLevel = EnchantmentLookup1201.INSTANCE.anySlot(entity, EnchantIds.RETURN_FROM_HELL);
         if (returnFromHellLevel <= 0) return false;
-
-        CompoundTag data = edata(entity);
-        if (data.getInt(KEY_RETURN_FROM_HELL_CD) > 0) return false;
 
         event.setCanceled(true);
         entity.setHealth(entity.getMaxHealth());
@@ -650,7 +638,6 @@ public final class SideEffectsBatch1 {
             int newDamage = boots.getDamageValue() + (boots.getMaxDamage() - boots.getDamageValue()) / 2;
             boots.setDamageValue(newDamage);
         }
-        data.putInt(KEY_RETURN_FROM_HELL_CD, 6000);
         if (entity.level() instanceof ServerLevel serverLevel) {
             serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
                     SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 0.8f);

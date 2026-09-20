@@ -4,6 +4,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.server.ServerAboutToStartEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 /**
@@ -25,6 +26,16 @@ public final class EnchantWiring1201 {
         NewEnchantsBatch1.register();
         // 本类: 补调 TickEffectsBatch1(1-72 tick 属性)与 tick 维护
         MinecraftForge.EVENT_BUS.register(EnchantWiring1201.class);
+    }
+
+    /**
+     * #59 "永劫回归" 的重建侧: 服务端启动、世界加载之前, 若有待重置标记就清掉旧地形
+     * (此刻没有文件句柄占用; 保留 level.dat 原种子与 playerdata/advancements/stats)。
+     */
+    @SubscribeEvent
+    public static void onServerAboutToStart(ServerAboutToStartEvent event) {
+        com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.applyPendingReset(
+                net.minecraftforge.fml.loading.FMLPaths.GAMEDIR.get().toFile());
     }
 
     @SubscribeEvent
@@ -67,7 +78,7 @@ public final class EnchantWiring1201 {
         TickSideBatch1.tickHalo(player, tc);
         // 爆裂黎明: 装填期无敌(1.21 源 tickExplosiveDawn L2437-2450)
         TickSideBatch1.tickExplosiveDawn(player, data);
-        // 冷却递减 + 过期标记清理(必须: 永劫回归 6000 tick 冷却只在此递减)
+        // 冷却递减 + 过期标记清理(1.21 源 tickCooldownsAndCleanup; 永劫回归的 6000 tick 冷却已删)
         TickSideBatch1.tickCooldownsAndCleanup(player, data, tc);
 
         // ===== 攻击侧补齐 tick(批 AttackSideBatch1)=====

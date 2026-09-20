@@ -153,7 +153,8 @@ public final class ForgeEventHandler1201 {
             SideEffectsBatch1.applyBurningDusk(attacker, defender);
             SideEffectsBatch1.applyHaltSlow(attacker, defender);
             SideEffectsBatch1.applyPaleMidnightMark(attacker, defender);
-            SideEffectsBatch1.applyFoolsMaskSideEffects(attacker, defender);
+            // 26. 假面的愚者: 随机增益/减益只在**受到攻击时**发放(applyFoolsMaskOnHit),
+            // 文档 #26 未授权攻击时也掷 -> 原 applyFoolsMaskSideEffects 调用已删。
             SideEffectsBatch1.applySuppression(attacker, defender);
             // 16. 血泣: 自伤 10/7/4(1.21 applyBloodWeepCost; 加伤已在 common computeBonusPercent)
             int bloodWeep = com.zhonz.moreenchantments.neoforge1201.EnchantmentLookup1201.INSTANCE
@@ -217,11 +218,6 @@ public final class ForgeEventHandler1201 {
                 defender.getAttribute(ZhonzAttributes1201.INCOMING_DAMAGE.get());
         if (inst == null) return;
         com.zhonz.moreenchantments.common.damage.EnchantmentLevelLookup lv = EnchantmentLookup1201.INSTANCE;
-        // 45. 顶点(主/副手): 受伤 -60% → ×0.4
-        if (lv.mainHand(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.APEX) > 0
-                || lv.slot(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.APEX, net.minecraft.world.entity.EquipmentSlot.OFFHAND) > 0) {
-            product *= 0.4;
-        }
         // 46. 困兽之斗(头盔, 生命<25%): 受伤 -50% → ×0.5
         if (lv.slot(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.CORNERED_BEAST, net.minecraft.world.entity.EquipmentSlot.HEAD) > 0
                 && defender.getHealth() <= defender.getMaxHealth() * 0.25f) {
@@ -234,8 +230,12 @@ public final class ForgeEventHandler1201 {
             product *= 0.7;
         }
         // 60. 奢侈的希望(盔甲, 满血): 受伤 +50% → ×1.5
+        // 文档 #60(ENCHANTMENTS.md L404-405):「血量 100% 时受伤 +50%; 血量低于 100% 时获得
+        // 50% 护甲穿透和 20% 幸运」—— 两档必须严格互补。原实现带 0.5 容差
+        // (`>= maxHealth - 0.5f`), 而 tick 侧(TickEffectsBatch1.tickLuxuriousHope)用的是
+        // 严格 `< maxHealth`; 血量落在 (满血-0.5, 满血) 时会**同时**吃到两档, 与文档不符。
         if (lv.anySlot(defender, com.zhonz.moreenchantments.common.enchant.EnchantIds.LUXURIOUS_HOPE) > 0
-                && defender.getHealth() >= defender.getMaxHealth() - 0.5f) {
+                && defender.getHealth() >= defender.getMaxHealth()) {
             product *= 1.5;
         }
         // 52. 极速攀升(靴子, y<0): 受伤 ×(1 + y/100)
@@ -268,17 +268,33 @@ public final class ForgeEventHandler1201 {
             product *= 1.3;
         }
         // 43. 燃烧的黄昏: 火焰来源 ×(1 + 叠层百分比)
+        // 文档 #42(ENCHANTMENTS.md L262):「+10%(可叠加,无上限;**10 秒未刷新则清除**)」——
+        // 该 10 秒窗口必须在**读取时**生效: 原实现只读 pct, 过期清理仅写在玩家 tick
+        // (TickSideBatch1.tickCooldownsAndCleanup), 于是**怪物身上的易伤永不过期**且持续累加。
+        // 对照 1.21 burningDuskFactor 的"读取时判过期"口径。
         float duskPct = data.getFloat("zhonz_burning_dusk_pct");
+        long duskUntil = data.getLong("zhonz_burning_dusk_until");
+        if (duskUntil > 0 && defender.level().getGameTime() >= duskUntil) {
+            data.remove("zhonz_burning_dusk_pct");
+            data.remove("zhonz_burning_dusk_until");
+            duskPct = 0;
+        }
         if (duskPct > 0 && source.is(net.minecraft.tags.DamageTypeTags.IS_FIRE)) {
             product *= (1.0 + duskPct);
         }
-        // 11. 我的海疆标记易伤: +30%~60%(1200 tick 内)
+        // 11. 我的海疆标记易伤: +30%~60%(400 tick = 20 秒刷新窗口内)
+        // 爬升基准 START 只在首次命中写入(README.md L128「刷新效果时间」不重置爬升);
+        // 到期由 UNTIL 决定 —— 重复命中只把 UNTIL 往后推, 坡道继续往上走;
+        // 每段窗口 20 秒: 持续命中不断续期可一直爬到 30 秒的 60% 峰值, 停手 20 秒才过期。
         long seaStart = data.getLong("zhonz_my_sea_domain_start");
         if (seaStart > 0) {
-            long elapsed = defender.level().getGameTime() - seaStart;
-            if (elapsed > 1200) {
+            long now = defender.level().getGameTime();
+            long seaUntil = data.getLong("zhonz_my_sea_domain_until");
+            if (seaUntil <= 0 || now >= seaUntil) {
                 data.remove("zhonz_my_sea_domain_start");
+                data.remove("zhonz_my_sea_domain_until");
             } else {
+                long elapsed = now - seaStart;
                 double vuln = elapsed < 200 ? 0.30 : (elapsed < 600 ? 0.30 + 0.30 * ((elapsed - 200) / 400.0) : 0.60);
                 product *= (1.0 + vuln);
             }

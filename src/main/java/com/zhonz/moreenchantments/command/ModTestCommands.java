@@ -5,6 +5,8 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.zhonz.moreenchantments.command.test.TestKit;
+import com.zhonz.moreenchantments.command.test.TestRegistry;
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
 import com.zhonz.moreenchantments.event.ModEventHandlers;
 import net.minecraft.core.Holder;
@@ -49,6 +51,33 @@ public class ModTestCommands {
         dispatcher.register(
                 Commands.literal("zhonztest")
                         .requires(source -> source.hasPermission(2))
+
+                        // ===== round-testkit: 统一测试装置 =====
+                        // run <suite> [filter] / all [filter] / list / verbose <on|off>
+                        // 这些子命令取代"靠日志肉眼比对"的烟雾测试, 输出逐条 PASS/FAIL/SKIP/ERROR
+                        // 与机器可解析的 SUMMARY 行。
+                        .then(Commands.literal("run")
+                                .then(Commands.argument("suite", StringArgumentType.string())
+                                        .executes(ModTestCommands::runSuite)
+                                        .then(Commands.argument("filter", StringArgumentType.greedyString())
+                                                .executes(ModTestCommands::runSuiteFiltered)
+                                        )
+                                )
+                        )
+                        .then(Commands.literal("all")
+                                .executes(ModTestCommands::runAllSuites)
+                                .then(Commands.argument("filter", StringArgumentType.greedyString())
+                                        .executes(ModTestCommands::runAllSuitesFiltered)
+                                )
+                        )
+                        .then(Commands.literal("list")
+                                .executes(ModTestCommands::listSuites)
+                        )
+                        .then(Commands.literal("verbose")
+                                .then(Commands.argument("mode", StringArgumentType.string())
+                                        .executes(ModTestCommands::setVerbose)
+                                )
+                        )
 
                         // === 伤害测试 ===
                         .then(Commands.literal("damage")
@@ -138,6 +167,14 @@ public class ModTestCommands {
                         // === 收到伤害通道 incoming_damage: 受击侧减伤/易伤数值断言 ===
                         .then(Commands.literal("incomingtest")
                                 .executes(ModTestCommands::incomingTest)
+                        )
+
+                        // === #59 永劫回归: 接线/主手口径/世界重建(非破坏) + live(真跑一次, 会停服) ===
+                        .then(Commands.literal("eternaltest")
+                                .executes(ModTestCommands::eternalTest)
+                                .then(Commands.literal("live")
+                                        .executes(ModTestCommands::eternalTestLive)
+                                )
                         )
 
                         // === 血路拓成坦途 测试：给主手武器设置指定生物类型的击杀数 ===
@@ -1141,16 +1178,78 @@ public class ModTestCommands {
                 + (ok4 ? "" : ", " + r4));
         if (ok4) passed++;
 
+        // 5/6. #75 唯有命运: 护甲穿着时"生命不低于 1"(受击侧保命)。此前只在客户端手测过,
+        //      testall 覆盖的是攻击侧(×6 真伤), 受击侧保命从未进自动化。
+        Holder<Enchantment> unyielding = ModEnchantments.getHolderOrNull(ModEnchantments.UNYIELDING_FATE);
+        if (unyielding == null) {
+            lines.add("FAIL unyielding_survive: unyielding_fate 未注册");
+        } else {
+            String r5 = runUnyieldingFateCase(level, unyielding, true);
+            boolean ok5 = r5 == null;
+            lines.add((ok5 ? "PASS " : "FAIL ")
+                    + "unyielding_survive: 胸甲带唯有命运 · 吃 10× 最大生命伤害 → 存活且生命≥1"
+                    + (ok5 ? "" : ", " + r5));
+            if (ok5) passed++;
+
+            String r6 = runUnyieldingFateCase(level, unyielding, false);
+            boolean ok6 = r6 == null;
+            lines.add((ok6 ? "PASS " : "FAIL ")
+                    + "unyielding_negative: 同款胸甲不带该附魔 → 同样伤害直接死亡(反例)"
+                    + (ok6 ? "" : ", " + r6));
+            if (ok6) passed++;
+        }
+
         final int passedFinal = passed;
-        final String report = "IncomingTest: cases=4 passed=" + passedFinal
+        final String report = "IncomingTest: cases=6 passed=" + passedFinal
                 + "\n  " + String.join("\n  ", lines);
         context.getSource().sendSuccess(() -> Component.literal(report), true);
         return passedFinal;
     }
 
     /**
-     * 单个 incoming 用例。返回 {@code null} = 通过, 否则返回失败描述。
+     * #75 唯有命运 受击侧: 胸甲带该附魔时, 致命伤害只能把生命打到 1(不会死)。
      *
+     * @param withEnchant true = 胸甲带附魔(应存活); false = 同款胸甲(反例, 应死亡)
+     * @return {@code null} = 符合预期, 否则返回失败描述
+     */
+    private static String runUnyieldingFateCase(ServerLevel level, Holder<Enchantment> unyielding,
+                                                boolean withEnchant) {
+        double x = 0.5, y = 200.0, z = 0.5;
+        LivingEntity victim = EntityType.ZOMBIE.create(level);
+        if (victim == null) return "僵尸创建失败";
+        victim.moveTo(x, y, z, 0.0f, 0.0f);
+        if (victim instanceof net.minecraft.world.entity.Mob mob) {
+            mob.setNoAi(true);
+            mob.setPersistenceRequired();
+        }
+        level.addFreshEntity(victim);
+        resetVictim(victim);   // 注意: 会清空装备, 所以附魔胸甲必须在它之后穿
+
+        ItemStack chest = new ItemStack(Items.NETHERITE_CHESTPLATE);
+        if (withEnchant) chest.enchant(unyielding, 1);
+        victim.setItemSlot(EquipmentSlot.CHEST, chest);
+
+        victim.invulnerableTime = 0;
+        victim.hurtTime = 0;
+        float dmg = victim.getMaxHealth() * 10.0f;
+        victim.hurt(level.damageSources().generic(), dmg);
+
+        boolean alive = victim.isAlive();
+        float hp = victim.getHealth();
+        victim.discard();
+        LOGGER.info("[IncomingTest] unyielding_fate withEnchant={} dmg={} alive={} hp={}",
+                withEnchant, dmg, alive, hp);
+
+        if (withEnchant) {
+            if (!alive) return String.format("被击杀(伤害 %.1f)", dmg);
+            if (hp < 1.0f) return String.format("存活但生命=%.2f < 1.0", hp);
+            return null;
+        }
+        return alive ? String.format("反例竟然存活(hp=%.2f, 伤害 %.1f)", hp, dmg) : null;
+    }
+
+    /**
+     * 单个 incoming 用例。返回 {@code null} = 通过, 否则返回失败描述。     *
      * <p><b>为什么会自己算 base</b>: 用例受击后必须存活, 否则断言无意义(死亡时血量被夹到 0,
      * 差值恰好等于剩余血量, 会伪装成"通过")。僵尸真实最大生命受多方影响(属性修饰/难度/生成规则),
      * 因此这里<b>读回真实最大生命</b>, 以它的 20% 作为伤害基准, 保证扣血后必有余量:
@@ -1241,5 +1340,421 @@ public class ModTestCommands {
                     dealt, expected, base, incomingAttr, y);
         }
         return null;
+    }
+
+    // ===================================================================
+    // #59 "永劫回归"(eternal_return): 接线 / 主手口径 / 世界重建
+    // ===================================================================
+
+    /**
+     * 「永劫回归」非破坏性测试 —— 覆盖"右键真的会命中这段代码"以及"重建世界保留什么"。
+     *
+     * <ol>
+     *   <li>{@code enchant_totem} —— 图腾+该附魔 = 正例(判定正半侧); 附魔等级能被读到</li>
+     *   <li>{@code wiring_mainhand} —— 打开 dry-run, 用 FakePlayer 主手图腾调
+     *       {@code stack.use(...)}(右键服务端走的就是这条), 断言返回 {@code CONSUME}
+     *       且 helper 命中 dry-run → <b>证明 mixin 注入点与附魔门都通</b></li>
+     *   <li>{@code negative_plain_totem} —— 普通图腾: 不命中(反例, 防"没附魔也生效")</li>
+     *   <li>{@code negative_offhand} —— 图腾只在副手: 不命中(文档口径是"<b>主手</b>持有")</li>
+     *   <li>{@code reset_keeps_playerdata} —— 在临时目录造一个完整世界目录, 跑真正的
+     *       {@link com.zhonz.moreenchantments.common.eternal.EternalReturnHelper#resetWorld}:
+     *       断言 region/entities/poi/data/DIM1/DIM-1 被删, playerdata/level.dat/advancements/stats
+     *       被保留且内容逐字节不变</li>
+     *   <li>{@code flag_roundtrip} —— 写待重置标记 → {@code applyPendingReset} 消费:
+     *       断言世界被重建、标记被销、保留份仍在(即"下次启动执行"的整条链路)</li>
+     *   <li>{@code thirty_million_gives_book} / {@code thirty_million_requires_egg} ——
+     *       #87 三千万转(唯一正途获取"永劫回归"): 带附魔的下界之星右键**龙蛋**给书, 并消耗星与龙蛋;
+     *       右键普通方块不给书(反例)</li>
+     * </ol>
+     *
+     * <p>真实停服/踢人不在本命令内跑 —— 那会毁掉测试世界。用 {@code /zhonztest eternaltest live}。
+     */
+    private static int eternalTest(CommandContext<CommandSourceStack> context) {
+        ServerLevel level = context.getSource().getLevel();
+        Holder<Enchantment> eternal = ModEnchantments.getHolderOrNull(ModEnchantments.ETERNAL_RETURN);
+        if (eternal == null) {
+            context.getSource().sendFailure(Component.literal("[EternalTest] eternal_return 附魔未注册"));
+            return 0;
+        }
+
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        int passed = 0;
+        FakePlayer fp = FakePlayerFactory.getMinecraft(level);
+
+        // ---------- 1. 附魔载体判定 ----------
+        ItemStack enchantedTotem = eternalTotem(eternal);
+        boolean ok1 = enchantedTotem.is(Items.TOTEM_OF_UNDYING)
+                && enchantedTotem.getEnchantmentLevel(eternal) == 1;
+        lines.add((ok1 ? "PASS " : "FAIL ") + "enchant_totem: 图腾可承载 eternal_return, 等级=1");
+        if (ok1) passed++;
+
+        // ---------- 2/3/4. 真实 use() 路径(含 mixin 注入点) ----------
+        try {
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.dryRun = true;
+
+            // 2. 主手带附魔图腾 → 应命中
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired = false;
+            fp.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, enchantedTotem);
+            net.minecraft.world.InteractionResultHolder<ItemStack> r2 =
+                    fp.getMainHandItem().use(level, fp,
+                            net.minecraft.world.InteractionHand.MAIN_HAND);
+            boolean ok2 = com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired
+                    && r2.getResult() == net.minecraft.world.InteractionResult.CONSUME;
+            lines.add((ok2 ? "PASS " : "FAIL ")
+                    + "wiring_mainhand: 主手附魔图腾 use() → 命中并 CONSUME(实际 " + r2.getResult() + ", 命中="
+                    + com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired + ")");
+            if (ok2) passed++;
+            String detail2 = com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunDetail;
+
+            // 3. 普通图腾(反例)
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired = false;
+            fp.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(Items.TOTEM_OF_UNDYING));
+            net.minecraft.world.InteractionResultHolder<ItemStack> r3 =
+                    fp.getMainHandItem().use(level, fp, net.minecraft.world.InteractionHand.MAIN_HAND);
+            boolean ok3 = !com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired
+                    && r3.getResult() != net.minecraft.world.InteractionResult.CONSUME;
+            lines.add((ok3 ? "PASS " : "FAIL ")
+                    + "negative_plain_totem: 普通图腾不触发(实际 " + r3.getResult() + ")");
+            if (ok3) passed++;
+
+            // 4. 只在副手(反例: 文档要求主手)
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired = false;
+            fp.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+            fp.setItemInHand(net.minecraft.world.InteractionHand.OFF_HAND, eternalTotem(eternal));
+            net.minecraft.world.InteractionResultHolder<ItemStack> r4 =
+                    fp.getOffhandItem().use(level, fp, net.minecraft.world.InteractionHand.OFF_HAND);
+            boolean ok4 = !com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired
+                    && r4.getResult() != net.minecraft.world.InteractionResult.CONSUME;
+            lines.add((ok4 ? "PASS " : "FAIL ")
+                    + "negative_offhand: 副手图腾不触发(实际 " + r4.getResult() + ")");
+            if (ok4) passed++;
+        } finally {
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.dryRun = false;
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.lastDryRunFired = false;
+            fp.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+            fp.setItemInHand(net.minecraft.world.InteractionHand.OFF_HAND, ItemStack.EMPTY);
+        }
+
+        // ---------- 5. 世界重建: 该删的删、该留的留 ----------
+        java.io.File gameDir = net.neoforged.fml.loading.FMLPaths.GAMEDIR.get().toFile();
+        java.io.File tmpRoot = new java.io.File(gameDir, "zhonz_eternal_test_tmp");
+        deleteTree(tmpRoot);
+        java.io.File tmpWorld = new java.io.File(tmpRoot, "world");
+        java.io.File tmpGameDir = new java.io.File(tmpRoot, "gamedir");
+        try {
+            buildSyntheticWorld(tmpWorld);
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.ResetReport rep =
+                    com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.resetWorld(tmpWorld);
+            String problem = checkResetResult(tmpWorld, rep);
+            boolean ok5 = problem == null;
+            lines.add((ok5 ? "PASS " : "FAIL ") + "reset_keeps_playerdata: " + (ok5 ? rep.summary() : problem));
+            if (ok5) passed++;
+
+            // ---------- 6. 标记往返 + applyPendingReset 整条链路 ----------
+            buildSyntheticWorld(tmpWorld);
+            com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.writePendingFlag(
+                    tmpGameDir, tmpWorld, 123456789L);
+            boolean flagSeen = com.zhonz.moreenchantments.common.eternal.EternalReturnHelper
+                    .hasPendingReset(tmpGameDir);
+            java.io.File readBack = com.zhonz.moreenchantments.common.eternal.EternalReturnHelper
+                    .pendingWorldRoot(tmpGameDir);
+            long seedRead = com.zhonz.moreenchantments.common.eternal.EternalReturnHelper
+                    .pendingSeed(tmpGameDir);
+            boolean applied = com.zhonz.moreenchantments.common.eternal.EternalReturnHelper
+                    .applyPendingReset(tmpGameDir);
+            boolean flagGone = !com.zhonz.moreenchantments.common.eternal.EternalReturnHelper
+                    .hasPendingReset(tmpGameDir);
+            boolean terrainGone = !new java.io.File(tmpWorld, "region").exists()
+                    && !new java.io.File(tmpWorld, "DIM-1").exists();
+            boolean dataKept = new java.io.File(tmpWorld, "playerdata/aaaa-bbbb.dat").isFile()
+                    && new java.io.File(tmpWorld, "level.dat").isFile();
+            String problem6 = null;
+            if (!flagSeen) problem6 = "标记写入后读不到";
+            else if (readBack == null || !readBack.getAbsolutePath().equals(tmpWorld.getAbsolutePath())) {
+                problem6 = "标记里回读的世界路径不对: " + readBack;
+            } else if (seedRead != 123456789L) {
+                problem6 = "标记里回读的种子不对: " + seedRead;
+            } else if (!applied) problem6 = "applyPendingReset 未执行";
+            else if (!flagGone) problem6 = "重置成功后标记未销";
+            else if (!terrainGone) problem6 = "applyPendingReset 没有清掉地形目录";
+            else if (!dataKept) problem6 = "applyPendingReset 之后玩家数据/level.dat 丢了";
+            boolean ok6 = problem6 == null;
+            lines.add((ok6 ? "PASS " : "FAIL ") + "flag_roundtrip: 写标记→启动时重建→销标记"
+                    + (ok6 ? "(路径/种子/保留份均一致)" : ", " + problem6));
+            if (ok6) passed++;
+        } catch (Exception e) {
+            lines.add("FAIL reset/flag 用例异常: " + e);
+            LOGGER.error("[EternalTest] reset/flag 异常", e);
+        } finally {
+            deleteTree(tmpRoot);
+        }
+
+        // ---------- 7/8. 唯一正途获取:#87 三千万转(下界之星右键已放置的龙蛋 → 永劫回归书) ----------
+        Holder<Enchantment> turns = ModEnchantments.getHolderOrNull(ModEnchantments.THIRTY_MILLION_TURNS);
+        if (turns == null) {
+            lines.add("FAIL thirty_million: 三千万转(thirty_million_turns)未注册");
+        } else {
+            boolean ok7 = thirtyMillionCase(level, fp, turns, eternal, true);
+            lines.add((ok7 ? "PASS " : "FAIL ")
+                    + "thirty_million_gives_book: 附魔下界之星右键龙蛋 → 获得永劫回归附魔书(星与龙蛋都被消耗)");
+            if (ok7) passed++;
+            boolean ok8 = thirtyMillionCase(level, fp, turns, eternal, false);
+            lines.add((ok8 ? "PASS " : "FAIL ")
+                    + "thirty_million_requires_egg: 同样持星右键普通方块 → 不给书(反例)");
+            if (ok8) passed++;
+        }
+
+        final int passedFinal = passed;
+        final String report = "EternalTest: cases=8 passed=" + passedFinal
+                + "\n  " + String.join("\n  ", lines);
+        context.getSource().sendSuccess(() -> Component.literal(report), true);
+        LOGGER.info("[EternalTest] {}", report.replace("\n", " | "));
+        return passedFinal;
+    }
+
+    /**
+     * #87 三千万转 → #59 永劫回归书。
+     *
+     * @param onEgg true = 目标方块是龙蛋(应给书); false = 普通方块(反例, 不该给书)
+     * @return 是否符合预期
+     */
+    private static boolean thirtyMillionCase(ServerLevel level, FakePlayer fp,
+                                             Holder<Enchantment> turns, Holder<Enchantment> eternal,
+                                             boolean onEgg) {
+        double x = 0.5, y = 200.0, z = 0.5;
+        net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.containing(x, y, z);
+        level.setBlockAndUpdate(pos, (onEgg ? net.minecraft.world.level.block.Blocks.DRAGON_EGG
+                : net.minecraft.world.level.block.Blocks.STONE).defaultBlockState());
+
+        fp.getInventory().clearContent();
+        ItemStack star = new ItemStack(Items.NETHER_STAR);
+        star.enchant(turns, 1);
+        fp.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, star);
+
+        net.minecraft.world.phys.BlockHitResult hit = new net.minecraft.world.phys.BlockHitResult(
+                net.minecraft.world.phys.Vec3.atCenterOf(pos), net.minecraft.core.Direction.UP, pos, false);
+        net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickBlock event =
+                new net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickBlock(
+                        fp, net.minecraft.world.InteractionHand.MAIN_HAND, pos, hit);
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(event);
+
+        boolean gotBook = false;
+        for (int i = 0; i < fp.getInventory().getContainerSize(); i++) {
+            ItemStack s = fp.getInventory().getItem(i);
+            if (s.is(Items.ENCHANTED_BOOK) && s.getEnchantmentLevel(eternal) > 0) {
+                gotBook = true;
+                break;
+            }
+        }
+        boolean starConsumed = fp.getMainHandItem().isEmpty();
+        boolean eggRemoved = !level.getBlockState(pos)
+                .is(net.minecraft.world.level.block.Blocks.DRAGON_EGG);
+        LOGGER.info("[EternalTest] thirty_million onEgg={} gotBook={} canceled={} starConsumed={} eggRemoved={}",
+                onEgg, gotBook, event.isCanceled(), starConsumed, eggRemoved);
+
+        fp.getInventory().clearContent();
+        fp.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        level.removeBlock(pos, false);
+
+        // 2026-09 口径变更(用户确认): 成功产出附魔书后, **被附魔的下界之星与被右键的龙蛋都被消耗**;
+        // 反例(普通方块)下不该给书, 也不该消耗任何材料。
+        return onEgg
+                ? (gotBook && starConsumed && eggRemoved && event.isCanceled())
+                : (!gotBook && !starConsumed && !event.isCanceled());
+    }
+
+    /**
+     * #59 端到端实跑: 让 FakePlayer 主手拿着附魔图腾真的 {@code use()} 一次 ——
+     * 于是标记被写下、玩家被踢(本测试无真人连接)、服务器停服。
+     * <b>下一次启动时</b>世界会被重建(保留背包/经验), 需在服务端侧核对日志与世界目录。
+     */
+    private static int eternalTestLive(CommandContext<CommandSourceStack> context) {
+        ServerLevel level = context.getSource().getLevel();
+        Holder<Enchantment> eternal = ModEnchantments.getHolderOrNull(ModEnchantments.ETERNAL_RETURN);
+        if (eternal == null) {
+            context.getSource().sendFailure(Component.literal("[EternalTest] eternal_return 附魔未注册"));
+            return 0;
+        }
+        java.io.File gameDir = net.neoforged.fml.loading.FMLPaths.GAMEDIR.get().toFile();
+        java.io.File worldRoot = context.getSource().getServer()
+                .getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).toFile();
+
+        // 先造一份"玩家数据"当证据: 记录当前 playerdata 里的文件数, 重建后必须还在
+        java.io.File playerdata = new java.io.File(worldRoot, "playerdata");
+        int playerFilesBefore = playerdata.isDirectory() && playerdata.listFiles() != null
+                ? playerdata.listFiles().length : 0;
+        long levelDatBefore = new java.io.File(worldRoot, "level.dat").length();
+
+        FakePlayer fp = FakePlayerFactory.getMinecraft(level);
+        fp.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, eternalTotem(eternal));
+        net.minecraft.world.InteractionResultHolder<ItemStack> r =
+                fp.getMainHandItem().use(level, fp, net.minecraft.world.InteractionHand.MAIN_HAND);
+
+        String msg = "EternalTest LIVE: 主手右键永劫回归图腾 → " + r.getResult()
+                + " | 世界=" + worldRoot.getAbsolutePath()
+                + " | 重置标记=" + com.zhonz.moreenchantments.common.eternal.EternalReturnHelper
+                        .hasPendingReset(gameDir)
+                + " | 重建前 playerdata 文件数=" + playerFilesBefore
+                + " level.dat=" + levelDatBefore + "B"
+                + " | 服务端将在 2 tick 后停服, 下次启动重建世界";
+        context.getSource().sendSuccess(() -> Component.literal(msg), true);
+        LOGGER.info("[EternalTest] {}", msg);
+        return 1;
+    }
+
+    /** 图腾 + 永劫回归 1 级。 */
+    private static ItemStack eternalTotem(Holder<Enchantment> eternal) {
+        ItemStack t = new ItemStack(Items.TOTEM_OF_UNDYING);
+        t.enchant(eternal, 1);
+        return t;
+    }
+
+    /** 造一个结构完整的假世界目录(含该保留的与该删的)。 */
+    private static void buildSyntheticWorld(java.io.File world) throws java.io.IOException {
+        writeFile(new java.io.File(world, "level.dat"), "LEVELDAT-ORIGINAL-SEED");
+        writeFile(new java.io.File(world, "level.dat_old"), "LEVELDAT-OLD");
+        writeFile(new java.io.File(world, "playerdata/aaaa-bbbb.dat"), "INVENTORY+XP");
+        writeFile(new java.io.File(world, "advancements/aaaa-bbbb.json"), "{}");
+        writeFile(new java.io.File(world, "stats/aaaa-bbbb.json"), "{}");
+        writeFile(new java.io.File(world, "datapacks/pack.mcmeta"), "{}");
+        writeFile(new java.io.File(world, "serverconfig/forge-server.toml"), "x=1");
+        // 以下都属于"地形/运行态", 必须被删掉
+        writeFile(new java.io.File(world, "region/r.0.0.mca"), "REGION");
+        writeFile(new java.io.File(world, "entities/r.0.0.mca"), "ENTITIES");
+        writeFile(new java.io.File(world, "poi/r.0.0.mca"), "POI");
+        writeFile(new java.io.File(world, "data/chunks.dat"), "CHUNKS");
+        writeFile(new java.io.File(world, "DIM1/region/r.0.0.mca"), "END");
+        writeFile(new java.io.File(world, "DIM-1/region/r.0.0.mca"), "NETHER");
+        writeFile(new java.io.File(world, "session.lock"), "LOCK");
+    }
+
+    /** 断言重建结果: 该留的还在且内容不变、该删的一律没了、报告无失败项。 */
+    private static String checkResetResult(java.io.File world,
+                                           com.zhonz.moreenchantments.common.eternal.EternalReturnHelper.ResetReport rep) {
+        if (!rep.ok()) return "有删除失败项: " + rep.summary();
+        Object[][] keep = {
+                {"level.dat", "LEVELDAT-ORIGINAL-SEED"},
+                {"level.dat_old", "LEVELDAT-OLD"},
+                {"playerdata/aaaa-bbbb.dat", "INVENTORY+XP"},
+                {"advancements/aaaa-bbbb.json", "{}"},
+                {"stats/aaaa-bbbb.json", "{}"},
+                {"datapacks/pack.mcmeta", "{}"},
+                {"serverconfig/forge-server.toml", "x=1"},
+                {"session.lock", "LOCK"},
+        };
+        for (Object[] k : keep) {
+            java.io.File f = new java.io.File(world, (String) k[0]);
+            if (!f.isFile()) return "该保留的丢了: " + k[0];
+            try {
+                String content = new String(java.nio.file.Files.readAllBytes(f.toPath()),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                if (!content.equals(k[1])) return "保留内容被改动: " + k[0] + " = " + content;
+            } catch (java.io.IOException e) {
+                return "保留文件读不出: " + k[0];
+            }
+        }
+        String[] gone = {"region", "entities", "poi", "data", "DIM1", "DIM-1"};
+        for (String g : gone) {
+            if (new java.io.File(world, g).exists()) return "该删的还在: " + g;
+        }
+        return null;
+    }
+
+    private static void writeFile(java.io.File f, String content) throws java.io.IOException {
+        java.io.File parent = f.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new java.io.IOException("mkdirs 失败: " + parent);
+        }
+        java.nio.file.Files.write(f.toPath(), content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static void deleteTree(java.io.File f) {
+        if (f == null || !f.exists()) return;
+        java.io.File[] kids = f.listFiles();
+        if (kids != null) {
+            for (java.io.File k : kids) deleteTree(k);
+        }
+        f.delete();
+    }
+
+    // ==================================================================
+    // round-testkit: 统一测试装置入口
+    //
+    // 设计口径:
+    //  - 报告同时写日志与命令反馈(日志是事后取证的唯一凭据, RCON 只反映当次回包);
+    //  - SUMMARY 行机器可解析, 便于脚本判定整体 PASS/FAIL;
+    //  - 默认只输出 FAIL/SKIP/ERROR, 用 verbose on 打开逐条 PASS;
+    //  - 返回值 1=PASS / 0=FAIL, 便于命令块与脚本感知。
+    // ==================================================================
+
+    /** 是否逐条输出 PASS。默认关, 避免 100+ 行刷屏。 */
+    private static boolean testkitVerbose = false;
+
+    private static int runSuite(CommandContext<CommandSourceStack> context) {
+        return runSelectedSuite(context, StringArgumentType.getString(context, "suite"), null);
+    }
+
+    private static int runSuiteFiltered(CommandContext<CommandSourceStack> context) {
+        return runSelectedSuite(context, StringArgumentType.getString(context, "suite"),
+                StringArgumentType.getString(context, "filter"));
+    }
+
+    private static int runAllSuites(CommandContext<CommandSourceStack> context) {
+        return runSuiteList(context, TestRegistry.all(context.getSource().getLevel()), null);
+    }
+
+    private static int runAllSuitesFiltered(CommandContext<CommandSourceStack> context) {
+        return runSuiteList(context, TestRegistry.all(context.getSource().getLevel()),
+                StringArgumentType.getString(context, "filter"));
+    }
+
+    private static int runSelectedSuite(CommandContext<CommandSourceStack> context, String selector, String filter) {
+        ServerLevel level = context.getSource().getLevel();
+        java.util.List<TestKit.Suite> suites = TestRegistry.select(level, selector);
+        if (suites.isEmpty()) {
+            context.getSource().sendFailure(Component.literal("[zhonztest] 未找到套件: " + selector
+                    + " | 可用: " + String.join(", ", TestRegistry.names(level))));
+            return 0;
+        }
+        return runSuiteList(context, suites, filter);
+    }
+
+    private static int runSuiteList(CommandContext<CommandSourceStack> context,
+                                    java.util.List<TestKit.Suite> suites, String filter) {
+        CommandSourceStack source = context.getSource();
+        // 报告出口: 同时进日志与命令反馈。sendSuccess(broadcast=false) 只回给发起者(含 RCON)。
+        java.util.function.Consumer<String> sink = line -> {
+            LOGGER.info(line);
+            source.sendSuccess(() -> Component.literal(line), false);
+        };
+
+        TestKit.Runner runner = new TestKit.Runner(sink, source.getServer() != null)
+                .verbose(testkitVerbose);
+        long start = System.nanoTime();
+        TestKit.Summary summary = runner.run(suites, filter);
+        long millis = (System.nanoTime() - start) / 1_000_000L;
+
+        sink.accept("[zhonztest] suites=" + suites.size() + " 耗时=" + millis + "ms " + summary.line());
+        return summary.green() ? 1 : 0;
+    }
+
+    private static int listSuites(CommandContext<CommandSourceStack> context) {
+        ServerLevel level = context.getSource().getLevel();
+        for (TestKit.Suite suite : TestRegistry.all(level)) {
+            CommandSourceStack source = context.getSource();
+            String line = "[zhonztest] " + suite.name + " cases=" + suite.size() + " — " + suite.desc;
+            source.sendSuccess(() -> Component.literal(line), false);
+        }
+        final int total = TestRegistry.totalCases(level);
+        context.getSource().sendSuccess(() -> Component.literal("[zhonztest] 用例总数 " + total), false);
+        return 1;
+    }
+
+    private static int setVerbose(CommandContext<CommandSourceStack> context) {
+        String mode = StringArgumentType.getString(context, "mode");
+        testkitVerbose = mode.equalsIgnoreCase("on") || mode.equalsIgnoreCase("true");
+        final boolean verbose = testkitVerbose;
+        context.getSource().sendSuccess(() -> Component.literal("[zhonztest] verbose=" + verbose), false);
+        return 1;
     }
 }

@@ -24,7 +24,9 @@ public class ProjectileWeaponCooldownMixin {
 
     @Inject(method = "getUseDuration", at = @At("RETURN"), cancellable = true)
     private void modifyUseDuration(ItemStack stack, LivingEntity entity, CallbackInfoReturnable<Integer> cir) {
-        int level = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.DIVINE_CURSE));
+        // 方案(b) getUseDuration 客户端同样要算(蓄力/冷却预测与动画), 不能按侧跳过;
+        // 直接读附魔组件即可两侧通用, 远程客户端无服务器 registry(getHolder 会 NPE)。
+        int level = ModEnchantments.getLevel(stack, ModEnchantments.DIVINE_CURSE);
         if (level <= 0) return;
 
         int original = cir.getReturnValue();

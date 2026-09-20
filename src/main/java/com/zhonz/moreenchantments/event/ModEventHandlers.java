@@ -52,6 +52,7 @@ import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingHealEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingShieldBlockEvent;
+import net.neoforged.neoforge.event.entity.player.AnvilRepairEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent.Post;
 
@@ -85,10 +86,11 @@ public class ModEventHandlers {
     private static final String KEY_FLEETING_GRACE_STORED = "zhonz_fleeting_grace_stored";
     private static final String KEY_SHELL_STRIP_RAW = "zhonz_shell_strip_raw";
     private static final String KEY_MY_SEA_DOMAIN_START = "zhonz_my_sea_domain_start";
+    // 11. 我的海疆: 标记的失效时刻(可被重复添加刷新; 递增起点 START 不随之重置)
+    private static final String KEY_MY_SEA_DOMAIN_UNTIL = "zhonz_my_sea_domain_until";
     private static final String KEY_GRIEVOUS_WOUND_UNTIL = "zhonz_grievous_wound_until";
     private static final String KEY_FOOLS_MASK_LUCKY = "zhonz_fools_mask_lucky";
     private static final String KEY_FOOLS_MASK_CHANGE_TICK = "zhonz_fools_mask_change_tick";
-    private static final String KEY_RETURN_FROM_HELL_CD = "zhonz_return_from_hell_cd";
     private static final String KEY_MUST_OPEN_PATH_CD = "zhonz_must_open_path_cd";
     private static final String KEY_FLIPPING_COIN_ATTACK_STACKS = "zhonz_flipping_coin_attack_stacks";
     private static final String KEY_FLIPPING_COIN_TARGET_STACKS = "zhonz_flipping_coin_target_stacks";
@@ -152,6 +154,8 @@ public class ModEventHandlers {
     private static final String KEY_MOURNING_LAST = "zhonz_mourning_last_damage";
     private static final String KEY_CHAIN_UNTIL = "zhonz_heaven_chain_until";
     private static final String KEY_CHAIN_PREV_DURATION = "zhonz_heaven_chain_prev_duration";
+    // 88. 天之锁: "上一次触发时刻" —— 文档要求按**触发间隔**判 10 秒, 不能用到期时刻(KEY_CHAIN_UNTIL)
+    private static final String KEY_CHAIN_LAST_TRIGGER = "zhonz_heaven_chain_last_trigger";
     private static final String KEY_TITAN_ELITE = "zhonz_elite"; // 泰坦: 自定义精英标记(置于实体 persistent data)
     private static final String KEY_HYPERTHYMESIA_LAST = "zhonz_hyperthymesia_last";
     private static final String KEY_ETERNAL_STANDING = "zhonz_eternal_standing_repair"; // 每秒修复节流
@@ -187,6 +191,8 @@ public class ModEventHandlers {
     private static final ResourceLocation SILENCE_CRIT_CHANCE_MODIFIER = rl("silence_in_depths_crit");
     private static final ResourceLocation FRENZIED_CRIT_DAMAGE_MODIFIER = rl("frenzied_bite_crit_damage");
     private static final ResourceLocation HEAVENFALL_CRIT_DAMAGE_MODIFIER = rl("heavenfall_crit_damage");
+    /** 73. 雪的伤: 雪天冰霜伤害的暴击伤害 +50%(Apothic CRIT_DAMAGE 通道)。 */
+    private static final ResourceLocation SNOW_WOUND_CRIT_DAMAGE_MODIFIER = rl("snow_wound_crit_damage");
     private static final ResourceLocation HEAVENFALL_DAMAGE_MODIFIER = rl("heavenfall_damage");
     /** 91. 自私澄澈天光: 受治疗量经 HEALING_RECEIVED 吃到暴击/暴伤(套装时另加增伤)。 */
     private static final ResourceLocation SELFISH_HEALING_MODIFIER = rl("selfish_clear_sky_healing");
@@ -234,6 +240,8 @@ public class ModEventHandlers {
                 });
         NeoForge.EVENT_BUS.register(ModEventHandlers.class);
         NeoForge.EVENT_BUS.register(ModTestCommands.class);
+        // 永劫回归(#59)的重建侧: 启动时(世界加载前)清理待重置的旧地形
+        NeoForge.EVENT_BUS.register(EternalReturnEvents.class);
     }
 
     @SubscribeEvent
@@ -302,8 +310,12 @@ public class ModEventHandlers {
     }
 
     private static void removeEffects(LivingEntity entity, boolean beneficial) {
-        for (var it = entity.getActiveEffects().iterator(); it.hasNext(); ) {
-            MobEffectInstance effect = it.next();
+        // 缺陷修复(运行时已复现): 原版 getActiveEffects() 返回 activeEffects 的 live view,
+        // 边遍历边 removeEffect 会在"同时存在 2 个符合条件的效果"时抛
+        // ConcurrentModificationException, 而调用点在 PlayerTick 里 → 直接崩 tick。
+        // 先快照再删即可(与同文件既有安全写法一致)。
+        var snapshot = new java.util.ArrayList<MobEffectInstance>(entity.getActiveEffects());
+        for (MobEffectInstance effect : snapshot) {
             if (effect.getEffect().value().isBeneficial() == beneficial) {
                 entity.removeEffect(effect.getEffect());
             }
@@ -338,6 +350,13 @@ public class ModEventHandlers {
     public static void onLivingHurt(LivingIncomingDamageEvent event) {
         LivingEntity defender = event.getEntity();
         if (defender.level().isClientSide()) return;
+
+        // 缺陷修复: 事件已被取消时不得再执行"改伤害/改血量"的动作。
+        // 取消意味着这次伤害不会发生(闪避成功、或别的 mod 取消了它), 但原实现继续往下走,
+        // 于是被闪避的伤害仍会进入 tryFinale(×100000 伤害 + 扣光武器耐久)与
+        // tryHarvest(血量阈值直接处决) —— 闪避/无敌形同虚设。
+        // 同一文件 443 行在闪避判定里已用 isCanceled() 表示"闪避成功", 这里只是把同一语义补齐。
+        if (event.isCanceled()) return;
 
         DamageSource source = event.getSource();
         Entity attackerEntity = source.getEntity();
@@ -439,10 +458,8 @@ public class ModEventHandlers {
         data.putLong(KEY_FOREKNOWLEDGE_LAST_COMBAT, defender.level().getGameTime());
 
         if (event.isCanceled()) {
-            // Apothic 已判定闪避成功:按设计向随机方向位移 1/4 格
-            float angle = RANDOM.nextFloat() * 2.0f * (float) Math.PI;
-            defender.teleportTo(defender.getX() + Math.cos(angle) * 0.25, defender.getY(),
-                    defender.getZ() + Math.sin(angle) * 0.25);
+            // Apothic 已判定闪避成功:按文档向 5 个方向之一位移 1/4 格
+            displaceForeknowledgeEyeDodge(defender);
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug("[ForeknowledgeEye] Dodged via Apothic! entity={}", defender.getName().getString());
             }
@@ -451,9 +468,7 @@ public class ModEventHandlers {
 
         // Apothic 事件未拦截时兜底: 该 tick 的确定性闪避判定为真则自行闪避(兼容事件顺序差异)
         if (dev.shadowsoffire.apothic_attributes.impl.AttributeEvents.isDodging(defender)) {
-            float angle = RANDOM.nextFloat() * 2.0f * (float) Math.PI;
-            defender.teleportTo(defender.getX() + Math.cos(angle) * 0.25, defender.getY(),
-                    defender.getZ() + Math.sin(angle) * 0.25);
+            displaceForeknowledgeEyeDodge(defender);
             event.setCanceled(true);
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug("[ForeknowledgeEye] Dodged via fallback (apoth isDodging)! entity={}", defender.getName().getString());
@@ -461,9 +476,12 @@ public class ModEventHandlers {
             return true;
         }
 
-        // 闪避失败:概率 -10%,下次 tick 同步到 DODGE_CHANCE 修饰
+        // 闪避失败:概率 -10%,下次 tick 同步到 DODGE_CHANCE 修饰。
+        // 文档 #33(ENCHANTMENTS.md:195 / README.md:322):「每次闪避失败降低 10% 的闪避概率」,
+        // 文档未给下限 —— 80% 起算第 8 次即 0%。原实现钳 5% 下限, 与文档不符;
+        // 现只钳概率自身的下界 0(不再提前停在 5%)。
         float prob = data.contains(KEY_FOREKNOWLEDGE_DODGE) ? data.getFloat(KEY_FOREKNOWLEDGE_DODGE) : 0.80f;
-        float newProb = Math.max(0.05f, prob - 0.10f);
+        float newProb = Math.max(0.0f, prob - 0.10f);
         data.putFloat(KEY_FOREKNOWLEDGE_DODGE, newProb);
         data.putFloat(KEY_FOREKNOWLEDGE_DODGE_APPLIED, -1.0f); // 强制下次 tick 重新同步
         if (LOGGER.isDebugEnabled()) {
@@ -477,6 +495,21 @@ public class ModEventHandlers {
         return false;
     }
 
+    /**
+     * 文档 #33(ENCHANTMENTS.md:195 / README.md:322):「受到攻击前向**左/后/右/左后/右后**移动
+     * **1/4 格**」。原实现取随机 360° 角度(可能朝攻击者方向位移),与文档列出的 5 个方向不符。
+     *
+     * <p>下表为相对受击者视线的偏航偏移;MC 约定 yaw 0 = 朝 +Z, 位移向量 = (-sin yaw, cos yaw),
+     * 因此 左 = -90°、后 = 180°、右 = +90°、左后 = -135°、右后 = +135°。
+     */
+    private static void displaceForeknowledgeEyeDodge(LivingEntity defender) {
+        final float[] docDirections = {-90.0f, 180.0f, 90.0f, -135.0f, 135.0f}; // 左/后/右/左后/右后
+        double rad = Math.toRadians(defender.getYRot() + docDirections[RANDOM.nextInt(docDirections.length)]);
+        defender.teleportTo(defender.getX() - Math.sin(rad) * 0.25,
+                defender.getY(),
+                defender.getZ() + Math.cos(rad) * 0.25);
+    }
+
     private static void recordFleetingGrace(LivingEntity defender, float rawDamage) {
         if (getEnchantmentLevel(defender, ModEnchantments.FLEETING_GRACE) <= 0) return;
         CompoundTag data = getEntityData(defender);
@@ -486,6 +519,32 @@ public class ModEventHandlers {
     // ===================================================================
     // LivingDamageEvent.Pre - Post-armor damage pipeline
     // ===================================================================
+
+    /**
+     * 文档 #75(ENCHANTMENTS.md L490):「装备者生命值**不会低于 1**」。
+     *
+     * <p>护甲前的 {@link #applyUnyieldingFateInvuln} 只把量压到 {@code health - 1}, 而护甲后
+     * 管线还会乘 {@code incoming_damage}(易伤 &gt; 1, 如燃烧的黄昏/海疆/先知)—— 那次乘算能把
+     * 这条保命击穿, 于是"不会低于 1"的承诺在易伤叠加下失效。
+     *
+     * <p>因此用**最低优先级**在所有结算之后再兜一次底: 对穿着唯有命运的受击者,
+     * 把最终伤害钳到 {@code health - 1}(生命已是 1 时钳到 0, 即本次伤害不再致命)。
+     * 这是文档明确承诺的行为, 与 manifest / return_from_hell 等其它免死路径互不冲突。
+     */
+    @SubscribeEvent(priority = net.neoforged.bus.api.EventPriority.LOWEST)
+    public static void enforceUnyieldingFateFloor(LivingDamageEvent.Pre event) {
+        LivingEntity defender = event.getEntity();
+        if (defender.level().isClientSide()) return;
+        if (!com.zhonz.moreenchantments.util.WeepingFireHelper.wearsUnyieldingFate(defender)) return;
+        float floor = Math.max(0.0F, defender.getHealth() - 1.0F);
+        if (event.getNewDamage() > floor) {
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("[UnyieldingFate] 保命兜底: {} -> {} (health={})",
+                        event.getNewDamage(), floor, defender.getHealth());
+            }
+            event.setNewDamage(floor);
+        }
+    }
 
     @SubscribeEvent
     public static void onLivingDamage(LivingDamageEvent.Pre event) {
@@ -545,7 +604,7 @@ public class ModEventHandlers {
      */
     private static float applyIncomingSettlement(LivingEntity defender, DamageSource source, float amount) {
         double product = 1.0D;
-        // My Sea Domain 标记易伤: +30%~60%(1200 tick 内)
+        // My Sea Domain 标记易伤: +30%~60%(刷新窗口 20 秒 = 400 tick)
         product *= mySeaDomainVulnerabilityFactor(defender);
         // Prophet's Call 标记: ×2.7
         product *= prophetsCallFactor(defender);
@@ -582,8 +641,19 @@ public class ModEventHandlers {
     }
 
     private static double burningDuskFactor(LivingEntity defender, DamageSource source) {
-        float pct = getEntityData(defender).getFloat(KEY_BURNING_DUSK_PCT);
+        CompoundTag data = getEntityData(defender);
+        float pct = data.getFloat(KEY_BURNING_DUSK_PCT);
         if (pct <= 0) return 1.0D;
+        // 文档 #42(ENCHANTMENTS.md L262):「使其受到的火焰伤害 +10%(可叠加,无上限;**10 秒未刷新则清除**)」。
+        // 该 10 秒窗口必须在这里(读取时)生效: 过期清理原本只写在玩家 tick 路径里(见 tickTimedCleanup),
+        // 于是**怪物身上的易伤永不过期**且会持续累加 —— 与文档"10 秒未刷新则清除"不符。
+        // 对照: paleVulnerabilityFactor 就是按"读取时判过期"写的, 这里补齐同一口径。
+        long until = data.getLong(KEY_BURNING_DUSK_UNTIL);
+        if (until <= 0L || defender.level().getGameTime() >= until) {
+            data.remove(KEY_BURNING_DUSK_PCT);
+            data.remove(KEY_BURNING_DUSK_UNTIL);
+            return 1.0D;
+        }
         if (!source.is(net.minecraft.tags.DamageTypeTags.IS_FIRE) && !source.is(WEEPING_FIRE)) return 1.0D;
         return 1.0f + pct;
     }
@@ -608,11 +678,18 @@ public class ModEventHandlers {
     private static double mySeaDomainVulnerabilityFactor(LivingEntity defender) {
         CompoundTag targetData = getEntityData(defender);
         if (!targetData.contains(KEY_MY_SEA_DOMAIN_START)) return 1.0D;
-        long elapsed = defender.level().getGameTime() - targetData.getLong(KEY_MY_SEA_DOMAIN_START);
-        if (elapsed > 1200) {
+        long now = defender.level().getGameTime();
+        long start = targetData.getLong(KEY_MY_SEA_DOMAIN_START);
+        // 文档 #11(ENCHANTMENTS.md:76, README.md:128):「可被重复添加刷新效果时间」——
+        // 过期只由**刷新出来的失效时刻**(UNTIL)决定, 递增起点 START 不受重复命中影响。
+        // UNTIL 缺失时(旧存档)回退到"起点 + 20 秒(400 tick)"的老口径, 行为不退化。
+        long until = targetData.getLong(KEY_MY_SEA_DOMAIN_UNTIL);
+        if ((until > 0L && now >= until) || now - start > 400) {
             targetData.remove(KEY_MY_SEA_DOMAIN_START);
+            targetData.remove(KEY_MY_SEA_DOMAIN_UNTIL);
             return 1.0D;
         }
+        long elapsed = now - start;
         float vulnerability;
         if (elapsed < 200) {
             vulnerability = 0.30f;
@@ -685,7 +762,8 @@ public class ModEventHandlers {
         applyShellStrip(attacker, defender, amount);
         applySuppression(attacker, defender);
         amount = applyExplosiveDawn(attacker, defender, source, mainHand, amount);
-        applyFoolsMaskSideEffects(attacker, defender);
+        // 26. 假面的愚者: 随机增益/减益只在**受到攻击时**发放(见 applyFoolsMaskOnHit),
+        // 文档 #26(ENCHANTMENTS.md:155-156 / README.md:256-258)未授权"攻击时"也掷, 原调用已删。
         amount = applyFleetingGraceBonus(attacker, amount);
         applyFlippingCoin(attacker, defender);
         applyGrievousWound(attacker, defender);
@@ -699,8 +777,8 @@ public class ModEventHandlers {
         amount = applyFleetFootstepsDamage(attacker, amount);
         // --- 41. 节奏: 攻击间隔稳定则+50%(计时副作用在链上, ×1.5 乘伤已迁乘伤事件通道) ---
         amount = applyRhythm(attacker, amount);
-        // --- 42/44/73 乘伤已迁入 computeEventConditionalMultiplier(lonely_noon 着火 /
-        //     fools_mask 随机 / weeping_child 自燃 / snow_wound 雪天), 链上只留副作用 ---
+        // --- 42/44 乘伤已迁入 computeEventConditionalMultiplier(lonely_noon 着火 /
+        //     fools_mask 随机 / weeping_child 自燃), 链上只留副作用 ---
         applyWeepingChildIgnite(attacker, defender);
         // --- 43. 燃烧的黄昏: 对燃烧目标叠加火焰易伤 ---
         applyBurningDusk(attacker, defender);
@@ -741,7 +819,19 @@ public class ModEventHandlers {
     private static void applyMySeaDomainMark(LivingEntity attacker, LivingEntity defender) {
         if (getMainHandEnchantmentLevel(attacker, ModEnchantments.MY_SEA_DOMAIN) <= 0) return;
         if (attacker.getMainHandItem().getItem() != Items.TRIDENT) return;
-        getEntityData(defender).putLong(KEY_MY_SEA_DOMAIN_START, defender.level().getGameTime());
+        long now = defender.level().getGameTime();
+        CompoundTag targetData = getEntityData(defender);
+        // 文档 #11(ENCHANTMENTS.md:76, README.md:128):「时间越长伤害增加越高, 最多 30 秒增加到 60%」
+        // 与「可被重复添加**刷新效果时间**」—— 递增起点 START 只在缺失时写(首个标记),
+        // 之后每次命中只刷新失效时刻 UNTIL。原实现每次命中都覆盖 START, 使持续战斗中
+        // elapsed≈0, 目标永远停在 +30%, 30 秒的 60% 档位不可达。
+        if (!targetData.contains(KEY_MY_SEA_DOMAIN_START)) {
+            targetData.putLong(KEY_MY_SEA_DOMAIN_START, now);
+        }
+        // README.md:128 定为 20 秒(ENCHANTMENTS.md:76 的 60 秒作废) = 400 tick。
+        // 语义: 这是**刷新窗口** —— 每次命中都重新计时; 持续挨打则窗口不失效,
+        // 易伤仍按 START 递增到 30 秒的 60% 峰值; 停手 20 秒才过期。仅改失效窗口长度, 递增逻辑不动。
+        targetData.putLong(KEY_MY_SEA_DOMAIN_UNTIL, now + 400);
     }
 
     private static void applyAreaStrike(LivingEntity attacker, LivingEntity defender, DamageSource source,
@@ -762,8 +852,10 @@ public class ModEventHandlers {
                 if (nearby == defender || nearby == attacker || !nearby.isAlive() || !attacker.canAttack(nearby)) {
                     continue;
                 }
-                float falloff = (float) Math.max(0, 1.0 - (nearby.distanceTo(defender) / radius));
-                nearby.hurt(source, aoeDamage * falloff);
+                // 文档 #12(ENCHANTMENTS.md:82 / README.md:138):「半径 2/4/6 格造成原伤害
+                // 30%/40%/55% 的伤害」—— 半径内是**固定档位**, 不是随距离线性衰减
+                // (原实现乘 falloff = 1-dist/radius, 只有圆心命中文档值, 边缘趋 0, 已删)。
+                nearby.hurt(source, aoeDamage);
             }
         } finally {
             areaStrikeSplashing = false;
@@ -806,9 +898,12 @@ public class ModEventHandlers {
         // Stacking percentage: 40% -> 75% (+5% per consecutive hit on the same target)
         String percentKey = "zhonz_shell_strip_percent_" + attacker.getId();
         float currentPercent = defenderData.contains(percentKey) ? defenderData.getFloat(percentKey) : 0.40f;
-        float trueDamagePercent = Math.min(0.75f, currentPercent + 0.05f);
+        // 文档 #18(ENCHANTMENTS.md:112, README.md:186): 基准 **40%**, 之后每次命中 +5% 直到 75%。
+        // 因此本次伤害必须用"当前已存百分比"(无记录 = 0.40 基准), **算完再**写回 +5%;
+        // 原实现先 +5% 再算伤害, 使首击变成 45%。
+        float trueDamagePercent = currentPercent;
         float trueDamage = reducedByArmor * trueDamagePercent;
-        defenderData.putFloat(percentKey, trueDamagePercent);
+        defenderData.putFloat(percentKey, Math.min(0.75f, currentPercent + 0.05f));
 
         if (trueDamage > 0) {
             defender.setHealth(Math.max(0, defender.getHealth() - trueDamage));
@@ -822,7 +917,13 @@ public class ModEventHandlers {
 
     private static void applySuppression(LivingEntity attacker, LivingEntity defender) {
         if (getMainHandEnchantmentLevel(attacker, ModEnchantments.SUPPRESSION) <= 0) return;
-        defender.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 120, 5));
+        // 文档 #22(ENCHANTMENTS.md L133): "被攻击目标**无法移动 6 秒**;使用后武器损毁"。
+        //  - 时长: 120 tick = 6 秒 ✓
+        //  - "无法移动": 原实现是 amplifier 5(Slowness VI = -90%), 只是"几乎不能动", 与文档不符。
+        //    改为 amplifier 255 —— 原版把放大等级钳在 [0,255], 移速属性由此被压到下限 0,
+        //    即真正意义上的无法移动(MobEffectInstance 的 amplifier 走 VarInt 同步, 不会字节溢出)。
+        defender.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 120, 255));
+        // 文档同句: "使用后武器损毁" → 清空主手(与文档一致, 保留)
         attacker.getMainHandItem().setCount(0);
     }
 
@@ -861,18 +962,12 @@ public class ModEventHandlers {
         }
     }
 
-    /** 假面的愚者: 随机乘数 ×(1~3)/×(0.01~1) 已迁 computeEventConditionalMultiplier; 此处仅随机 buff/debuff 副作用。 */
-    private static void applyFoolsMaskSideEffects(LivingEntity attacker, LivingEntity defender) {
-        if (getSlotEnchantmentLevel(attacker, ModEnchantments.FOOLS_MASK, EquipmentSlot.HEAD) <= 0) return;
-        CompoundTag data = EntityDataStorage.getData(attacker);
-        if (data.getBoolean(KEY_FOOLS_MASK_LUCKY)) {
-            applyRandomBuff(attacker);
-        } else {
-            applyRandomDebuff(attacker);
-        }
-    }
-
-    /** 假面的愚者: 佩戴者受到攻击时获得随机增益(幸运)或减益(不幸) */
+    /**
+     * 假面的愚者: 佩戴者**受到攻击时**获得随机增益(幸运)或减益(不幸)。
+     * 随机乘数 ×(1~3)/×(0.01~1) 已迁 computeEventConditionalMultiplier。
+     * 文档 #26(ENCHANTMENTS.md:155-156 / README.md:256-258)只写了"受到攻击时",
+     * 攻击侧的发放(原 applyFoolsMaskSideEffects)已删。
+     */
     private static void applyFoolsMaskOnHit(LivingEntity defender) {
         if (getSlotEnchantmentLevel(defender, ModEnchantments.FOOLS_MASK, EquipmentSlot.HEAD) <= 0) return;
         CompoundTag data = getEntityData(defender);
@@ -988,7 +1083,7 @@ public class ModEventHandlers {
         Entity attackerEntity = source.getEntity();
         applyDeepSeasGrace(defender, amount);
         applyGemUmbrella(defender, attackerEntity);
-        applyFishballTransfer(defender, source, amount); // adjusts `amount` via local variable
+        amount = applyFishballTransfer(defender, source, amount); // 转移出去的部分从本次伤害里扣除
         applyToughnessShield(defender);
         applyEmergencyRescue(defender, amount);
         // 终点倒计时: 倒计时期间累积目标受到的伤害
@@ -1034,19 +1129,24 @@ public class ModEventHandlers {
         }
     }
 
-    private static void applyFishballTransfer(LivingEntity defender, DamageSource source, float amount) {
+    private static float applyFishballTransfer(LivingEntity defender, DamageSource source, float amount) {
         // Fishball-equipped entities are tanks: they absorb 30% of nearby same-type allies' damage.
-        if (getEnchantmentLevel(defender, ModEnchantments.FISHBALL) > 0) return;
+        if (getEnchantmentLevel(defender, ModEnchantments.FISHBALL) > 0) return amount;
         List<LivingEntity> nearbyWearer = getNearbySameTypeWithFishball(defender, 10.0);
-        if (nearbyWearer.isEmpty()) return;
+        if (nearbyWearer.isEmpty()) return amount;
 
-        float transferDamage = amount * 0.3f;
-        nearbyWearer.get(0).hurt(source, transferDamage);
+        // 文档 #8(ENCHANTMENTS.md:58, README.md:98): 将同类生物受到的伤害"**转移**"到装备者身上。
+        // 原实现只给装备者 hurt(30%) 而原受击者的 amount 分毫未减 → 总量 130%, 是复制而非转移。
+        // 改为真转移: 转移多少就从本次伤害里扣掉多少。比例文档未授权, 沿用既有 30%。
+        float moved = amount * 0.3f;
+        nearbyWearer.get(0).hurt(source, moved);
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("[Fishball] Transferred {} damage from {} to fishball wearer {}",
-                    transferDamage, defender.getName().getString(),
+                    moved, defender.getName().getString(),
                     nearbyWearer.get(0).getName().getString());
         }
+        // 转移后原受击者只剩 70%(不足 0 时钳到 0)
+        return Math.max(0.0f, amount - moved);
     }
 
     private static void applyToughnessShield(LivingEntity defender) {
@@ -1274,16 +1374,21 @@ public class ModEventHandlers {
         data.putInt("zhonz_apex_last", level);
         setTransient(player, ALObjects.Attributes.DODGE_CHANCE, APEX_DODGE_MODIFIER,
                 level > 0 ? 1.00 : 0, AttributeModifier.Operation.ADD_VALUE);
-        setTransient(player, Attributes.ATTACK_DAMAGE, APEX_DAMAGE_MODIFIER,
-                level > 0 ? 10.0 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+        // README.md:430「造成伤害增加 1000%」→ 本模组自己的独立乘区 bonus_damage。
+        // 不再写共享的 ATTACK_DAMAGE: 那是属性面板(属性模块 GUI 的"攻击伤害"行)与其他 mod
+        // 伤害管线都会读的公共输入, 写它就等于把增伤塞回属性模块的伤害结算里, 违背
+        // README.md:7「增伤效果只参与最后的伤害判定, 从而兼容其他 mod 的武器、装备」。
+        // 数值不变: bonus ADD_VALUE 10.0 → ×(1+10) = ×11, 与旧 MULT_TOTAL 10.0 完全等价。
+        addPercentBonus(player, APEX_DAMAGE_MODIFIER, level > 0 ? 10.0 : 0);
         setTransient(player, Attributes.MOVEMENT_SPEED, APEX_MOVEMENT_MODIFIER,
                 level > 0 ? 1.0 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
     }
 
     // --- 46. 困兽之斗: 头盔, 生命<25% 受伤-50% 伤害+60% 治疗+50% ---
     private static void tickCorneredBeast(Player player, CompoundTag data) {
+        // 文档 #46(ENCHANTMENTS.md:297, README.md:438)是"生命**低于** 25%" → 严格小于(恰好 25% 不生效)
         boolean active = getSlotEnchantmentLevel(player, ModEnchantments.CORNERED_BEAST, EquipmentSlot.HEAD) > 0
-                && player.getHealth() <= player.getMaxHealth() * 0.25f;
+                && player.getHealth() < player.getMaxHealth() * 0.25f;
         // 伤害+60% 迁入 bonus_damage(加伤通道), 每次 tick 刷新以响应血量变化(percent 计算下沉 common)
         addPercentBonus(player, CORNERED_BEAST_BONUS_MODIFIER,
                 com.zhonz.moreenchantments.common.damage.TickBonusRules.corneredBeast(EVENT_COND_CTX.levels, player));
@@ -1297,8 +1402,9 @@ public class ModEventHandlers {
 
     // --- 47. 剧烈搏动: 胸甲, 生命<50% 攻速+50% 移速+30% 攻击回复1生命 ---
     private static void tickViolentPulse(Player player, CompoundTag data) {
+        // 文档 #47(ENCHANTMENTS.md:303, README.md:446)是"生命低于 50%" → 严格小于
         boolean active = getSlotEnchantmentLevel(player, ModEnchantments.VIOLENT_PULSE, EquipmentSlot.CHEST) > 0
-                && player.getHealth() <= player.getMaxHealth() * 0.5f;
+                && player.getHealth() < player.getMaxHealth() * 0.5f;
         int level = active ? 1 : 0;
         int last = data.getInt("zhonz_violent_last");
         if (level == last) return;
@@ -1311,7 +1417,8 @@ public class ModEventHandlers {
 
     private static float applyViolentPulseAttack(LivingEntity attacker, float amount) {
         if (getSlotEnchantmentLevel(attacker, ModEnchantments.VIOLENT_PULSE, EquipmentSlot.CHEST) <= 0) return amount;
-        if (attacker.getHealth() <= attacker.getMaxHealth() * 0.5f && attacker.isAlive()) {
+        // 文档 #47(ENCHANTMENTS.md:303, README.md:446): "生命低于 50%" → 严格小于
+        if (attacker.getHealth() < attacker.getMaxHealth() * 0.5f && attacker.isAlive()) {
             attacker.heal(1.0f);
         }
         return amount;
@@ -1379,8 +1486,10 @@ public class ModEventHandlers {
         data.putInt("zhonz_self_bound_last", level);
         setTransient(player, Attributes.STEP_HEIGHT, SELF_BOUND_STEP_MODIFIER,
                 level > 0 ? -1 : 0, AttributeModifier.Operation.ADD_VALUE);
-        setTransient(player, Attributes.ATTACK_DAMAGE, SELF_BOUND_DAMAGE_MODIFIER,
-                level > 0 ? -0.9 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+        // README.md:476「造成伤害减 90%」→ 独立乘区 bonus_damage(-0.9 => ×(1-0.9) = ×0.1,
+        // 与旧 ATTACK_DAMAGE MULT_TOTAL -0.9 完全等价)。诅咒不再经共享攻击伤害属性,
+        // 从而不会被属性模块面板/其他 mod 的伤害管线二次消费(README.md:7 同一承诺)。
+        addPercentBonus(player, SELF_BOUND_DAMAGE_MODIFIER, level > 0 ? -0.9 : 0);
         setTransient(player, Attributes.MOVEMENT_SPEED, SELF_BOUND_MOVEMENT_MODIFIER,
                 level > 0 ? -0.5 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
     }
@@ -1407,7 +1516,7 @@ public class ModEventHandlers {
         double dodge = player.getAttributeValue(ALObjects.Attributes.DODGE_CHANCE);
         if (level <= 0) {
             if (data.getFloat(KEY_ACCELERATED_LAST_DODGE) > 0) {
-                setTransient(player, Attributes.ATTACK_DAMAGE, ACCELERATED_DAMAGE_MODIFIER, 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+                addPercentBonus(player, ACCELERATED_DAMAGE_MODIFIER, 0);
                 setTransient(player, Attributes.ATTACK_SPEED, ACCELERATED_ATTACK_SPEED_MODIFIER, 0, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
                 data.putFloat(KEY_ACCELERATED_LAST_DODGE, 0);
             }
@@ -1416,8 +1525,10 @@ public class ModEventHandlers {
         float lastDodge = data.getFloat(KEY_ACCELERATED_LAST_DODGE);
         if (Math.abs(lastDodge - dodge) < 0.001f) return;
         data.putFloat(KEY_ACCELERATED_LAST_DODGE, (float) dodge);
-        setTransient(player, Attributes.ATTACK_DAMAGE, ACCELERATED_DAMAGE_MODIFIER,
-                dodge * 2.0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+        // README.md:490「造成伤害时增伤等同于闪避率 × 2」→ 独立乘区 bonus_damage
+        // (×(1+闪避率×2), 与旧 ATTACK_DAMAGE MULT_TOTAL 闪避率×2 完全等价);
+        // 攻速那一半是属性语义, 仍留在 ATTACK_SPEED 上。
+        addPercentBonus(player, ACCELERATED_DAMAGE_MODIFIER, dodge * 2.0);
         setTransient(player, Attributes.ATTACK_SPEED, ACCELERATED_ATTACK_SPEED_MODIFIER,
                 dodge, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
     }
@@ -1487,7 +1598,10 @@ public class ModEventHandlers {
         double current = instance.getValue();
         double deficit = base - current;
         if (deficit > 0.01) {
-            setTransient(player, attr, id, deficit * 2.0, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
+            // 文档 #58(ENCHANTMENTS.md L380):「获得**被减免值 ×2** 的对应增益」—— 绝对增量:
+            // 例 base 4.0 被减到 3.0, deficit=1.0 → 应得 3.0 + 1.0×2 = 5.0。
+            // 原实现把 `deficit*2.0` 写成 ADD_MULTIPLIED_BASE → 4.0×(1+2.0)=12.0, 量纲错配放大 6 倍。
+            setTransient(player, attr, id, deficit * 2.0, AttributeModifier.Operation.ADD_VALUE);
         } else {
             removeModifier(player, attr, id);
         }
@@ -1626,13 +1740,27 @@ public class ModEventHandlers {
         setTransient(player, ALObjects.Attributes.CRIT_DAMAGE, FRENZIED_CRIT_DAMAGE_MODIFIER,
                 critDamage1, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
 
-        // 噤声击坠天堂: 暴击伤害+增伤 = 暴击率 (联动时×2) —— 增伤走事件, 暴击伤害走属性
+        // 噤声击坠天堂: 暴击伤害+增伤 = 暴击率 (联动时×2) —— 暴击伤害走 Apothic CRIT_DAMAGE 属性,
+        // 增伤走本模组独立乘区 bonus_damage(不再写共享 ATTACK_DAMAGE, 见 apex 处注)。
         double critChanceValue = player.getAttributeValue(ALObjects.Attributes.CRIT_CHANCE);
         double critDamage2 = heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0;
         setTransient(player, ALObjects.Attributes.CRIT_DAMAGE, HEAVENFALL_CRIT_DAMAGE_MODIFIER,
                 critDamage2, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
-        setTransient(player, Attributes.ATTACK_DAMAGE, HEAVENFALL_DAMAGE_MODIFIER,
-                heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+        // README.md:602「获得等同于暴击率的...增伤」→ bonus_damage; 数值等价: ×(1+暴击率×(联动?2:1))
+        addPercentBonus(player, HEAVENFALL_DAMAGE_MODIFIER,
+                heavenfall ? critChanceValue * (heavenfallCombo ? 2 : 1) : 0);
+
+        // 73. 雪的伤: 文档/README(README.md:648, ENCHANTMENTS.md:485)「在雪天造成的**冰霜伤害暴击伤害增加 50%**」。
+        // 注意 ENCHANTMENTS.md:488 的实现注记写的是"最终伤害 ×1.5", 那是错的(README 为最终解释),
+        // 故此处走 Apothic 的 CRIT_DAMAGE 通道(+50% ADD_MULTIPLIED_BASE, 相对基础 1.5 倍 => 2.25 倍),
+        // 事件乘伤里不再保留雪天项(computeConditionalMultiplier)。
+        // 冰霜条件: 雪的伤持有者的攻击已被 WeepingFireHelper 转成 frost(is_freezing), 天然成立。
+        // 必须由 tick 常驻维护 —— Apothic 在 LivingIncomingDamageEvent(HIGH)读该属性掷暴击,
+        // 伤害事件内临时写入来不及(与上面两个暴伤附魔同一口径)。
+        boolean snowWound = weapon.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.SNOW_WOUND)) > 0;
+        boolean snowWeather = snowWound && com.zhonz.moreenchantments.common.damage.EventDamageConditions.isSnowWeather(player);
+        setTransient(player, ALObjects.Attributes.CRIT_DAMAGE, SNOW_WOUND_CRIT_DAMAGE_MODIFIER,
+                snowWeather ? 0.5 : 0, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
     }
 
     // --- 91. 自私澄澈天光: 受治疗量在最终生效时吃暴击率×暴击伤害(套装时另吃增伤) ---
@@ -1725,7 +1853,13 @@ public class ModEventHandlers {
                         toRemove -= take;
                     }
                 }
-                player.getInventory().add(new ItemStack(result, 1));
+                // 缺陷修复: 扣料后必须检查产物是否真的进了背包。
+                // Inventory.add 在满包时返回 false 且什么都不放, 原实现丢掉了返回值 →
+                // 9 个材料被吞掉、产物凭空消失。现在放不下就直接掉在玩家脚下(用户口径: 绝不吞材料)。
+                ItemStack merged = new ItemStack(result, 1);
+                if (!player.getInventory().add(merged)) {
+                    player.drop(merged, false);
+                }
                 if (LOGGER.isDebugEnabled()) LOGGER.debug("[AutoMerge] merged 9x{} -> {}", source, result);
                 break;
             }
@@ -1772,19 +1906,28 @@ public class ModEventHandlers {
         else if (block == net.minecraft.world.level.block.Blocks.POTATOES) { crop = net.minecraft.world.level.block.Blocks.POTATOES; seed = Items.POTATO; }
         else if (block == net.minecraft.world.level.block.Blocks.BEETROOTS) { crop = net.minecraft.world.level.block.Blocks.BEETROOTS; seed = Items.BEETROOT_SEEDS; }
         if (crop == null || seed == null) return;
+        if (!(event.getLevel() instanceof ServerLevel sl)) return;
 
-        // 消耗一个种子
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
-            ItemStack stack = player.getInventory().getItem(i);
-            if (!stack.isEmpty() && stack.is(seed)) {
-                stack.shrink(1);
-                // 原地补种
-                if (event.getLevel() instanceof ServerLevel sl) {
-                    sl.setBlockAndUpdate(event.getPos(), crop.defaultBlockState());
-                }
-                break;
+        // 缺陷修复: 不能在 BreakEvent 里直接 setBlockAndUpdate —— 此刻方块**还没被破坏**,
+        // 紧随其后的破坏流程会把刚种下去的作物一起删掉, 结果是"种子白扣一格、地里什么也没有"。
+        // 改为排到本次破坏结算之后执行, 并在那时先确认目标位置确实空了(破坏被取消则不补种),
+        // 种子也改成"真正补种成功才扣"。
+        net.minecraft.core.BlockPos pos = event.getPos();
+        var cropState = crop.defaultBlockState();
+        final Item seedItem = seed;
+        sl.getServer().execute(() -> {
+            if (!sl.getBlockState(pos).isAir()) {
+                return; // 方块还在: 破坏没生效/被取消, 不该补种
             }
-        }
+            for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+                ItemStack stack = player.getInventory().getItem(i);
+                if (!stack.isEmpty() && stack.is(seedItem)) {
+                    stack.shrink(1);
+                    sl.setBlockAndUpdate(pos, cropState);
+                    break;
+                }
+            }
+        });
     }
 
     // --- 70. 花圃: 靴子, 附近3-4格随机生成花 ---
@@ -1798,7 +1941,9 @@ public class ModEventHandlers {
                 net.minecraft.world.level.block.Blocks.AZURE_BLUET, net.minecraft.world.level.block.Blocks.RED_TULIP,
                 net.minecraft.world.level.block.Blocks.ORANGE_TULIP, net.minecraft.world.level.block.Blocks.WHITE_TULIP,
                 net.minecraft.world.level.block.Blocks.PINK_TULIP, net.minecraft.world.level.block.Blocks.OXEYE_DAISY,
-                net.minecraft.world.level.block.Blocks.CORNFLOWER, net.minecraft.world.level.block.Blocks.LILY_OF_THE_VALLEY
+                net.minecraft.world.level.block.Blocks.CORNFLOWER, net.minecraft.world.level.block.Blocks.LILY_OF_THE_VALLEY,
+                // 文档 #70(ENCHANTMENTS.md:464, README.md:626):「随机生成随机的花**或者樱花花瓣**」
+                net.minecraft.world.level.block.Blocks.PINK_PETALS
         };
         int dist = 3 + RANDOM.nextInt(2); // 3-4 格
         net.minecraft.core.BlockPos base = player.blockPosition();
@@ -1823,7 +1968,9 @@ public class ModEventHandlers {
             pd.putInt("zhonz_halo_sleep_ticks", 0);
         }
         if (!hasHalo) return;
-        if (player.level().getMaxLocalRawBrightness(player.blockPosition()) > 8) {
+        // 文档 #71(ENCHANTMENTS.md:468):「**有光照**时发光」= 光照 > 0; 原实现 > 8, 使火把照明的
+        // 暗处(光 1-8)不发光, 与"有光照"不符。
+        if (player.level().getMaxLocalRawBrightness(player.blockPosition()) > 0) {
             player.addEffect(new MobEffectInstance(MobEffects.GLOWING, 40, 0, false, false));
         }
         if (player.isSleeping()) {
@@ -1958,6 +2105,64 @@ public class ModEventHandlers {
     @SubscribeEvent
     public static void onShieldBlock(LivingShieldBlockEvent event) {
         onCityShieldBlock(event);
+        onDeepSeasGraceShieldBlock(event);
+    }
+
+    /**
+     * 5. 深海的供养: 盾牌侧回血 —— 文档 #5(ENCHANTMENTS.md:40, README.md:68)
+     * 「受伤**或盾牌扛伤时**恢复生命上限 5%/10%/20% 的血量」。
+     *
+     * <p>受伤侧见 {@link #applyDeepSeasGrace}(LivingDamageEvent.Pre); 这一侧必须真的"扛住了一次伤害",
+     * 故只能挂在盾挡事件上。完全挡下时原版不会再触发 LivingDamageEvent, 因此不会与受伤侧重复回血;
+     * 部分格挡(既有格挡又有残余伤害)会两侧各触发一次, 属文档"受伤或扛伤"的并集语义。
+     */
+    private static void onDeepSeasGraceShieldBlock(LivingShieldBlockEvent event) {
+        LivingEntity defender = event.getEntity();
+        if (defender.level().isClientSide()) return;
+        if (!event.getBlocked()) return;
+        int level = getEnchantmentLevel(defender, ModEnchantments.DEEP_SEAS_GRACE);
+        if (level <= 0) return;
+        float healRatio = level == 1 ? 0.05f : (level == 2 ? 0.10f : 0.20f);
+        defender.heal(defender.getMaxHealth() * healRatio);
+    }
+
+    /**
+     * 34. 血路: 铁砧合并同种武器时, 两把武器的同种生物击杀计数相加。
+     *
+     * <p>文档 #34(ENCHANTMENTS.md:201, README.md:332):「在铁砧上合并同种武器时, 将两把武器的
+     * 同种生物击杀计数**相加**」。原实现只有 {@link #getBloodPathKillTag}/{@link #setBloodPathKillTag}
+     * 两个存取器而**全仓无调用者**, 合并从未发生。
+     *
+     * <p>为什么用 AnvilRepairEvent 而不是 AnvilUpdateEvent: AnvilUpdateEvent 在 vanilla 合并逻辑
+     * **之前**触发, 且"只要给它一个非空 output, vanilla 合并就被整段跳过"(见该事件 javadoc 与
+     * CommonHooks.onAnvilChange) —— 要借它落地就必须自己重写附魔/耐久/改名的全部合并规则, 不是
+     * 最小改动。AnvilRepairEvent 在玩家**取走**结果时触发, 拿到的 output 就是槽里那份已被 vanilla
+     * 合并完成、且**同一个实例**会被交给玩家的 ItemStack(AbstractContainerMenu.doClick 的
+     * tryRemove/setCarried 与 Slot.onTake 传参同源), 就地写入计数即可。
+     */
+    @SubscribeEvent
+    public static void onAnvilRepair(AnvilRepairEvent event) {
+        ItemStack left = event.getLeft();
+        ItemStack right = event.getRight();
+        ItemStack output = event.getOutput();
+        if (left.isEmpty() || right.isEmpty() || output.isEmpty()) return;
+        // "同种武器": 左右必须是同一种物品(vanilla 也只在 is(同一物品) 时才合并)
+        if (!left.is(right.getItem())) return;
+        // 两把武器都要带血路才有"两边的计数"可加(与文档"合并同种武器"一致)
+        if (left.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BLOOD_PATH)) <= 0
+                || right.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.BLOOD_PATH)) <= 0) {
+            return;
+        }
+        CompoundTag merged = getBloodPathKillTag(left).copy();
+        CompoundTag rightKills = getBloodPathKillTag(right);
+        for (String mobKey : rightKills.getAllKeys()) {
+            // getInt 对缺失键返回 0, 故直接相加即可
+            merged.putInt(mobKey, merged.getInt(mobKey) + rightKills.getInt(mobKey));
+        }
+        setBloodPathKillTag(output, merged);
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("[BloodPath] 铁砧合并击杀计数: left+right → {} 个生物种类", merged.getAllKeys().size());
+        }
     }
 
     /** 87/89. 右键交互: 下界之星右键龙蛋(三千万转); 慈悲物品右键信标(慈悲绑定并消耗物品附魔)。 */
@@ -1971,7 +2176,8 @@ public class ModEventHandlers {
         if (hand.is(Items.NETHER_STAR)
                 && hand.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.THIRTY_MILLION_TURNS)) > 0
                 && player.level().getBlockState(event.getPos()).is(Blocks.DRAGON_EGG)) {
-            onThirtyMillionTurns(player, hand);
+            // 成功产出附魔书后: 消耗被附魔的下界之星 + 被右键的龙蛋
+            onThirtyMillionTurns(player, hand, event.getPos());
             event.setCanceled(true);
             return;
         }
@@ -2091,9 +2297,8 @@ public class ModEventHandlers {
         int returnFromHellLevel = getEnchantmentLevel(entity, ModEnchantments.RETURN_FROM_HELL);
         if (returnFromHellLevel <= 0) return false;
 
-        CompoundTag data = getEntityData(entity);
-        if (data.getInt(KEY_RETURN_FROM_HELL_CD) > 0) return false;
-
+        // 文档 #24(ENCHANTMENTS.md:143 / README.md:236):「受到致命伤害时抵消这次伤害并使血量回满,
+        // 靴子耐久**减半**」—— 文档没有任何冷却条款, 故删除原实现附加的 6000 tick(5 分钟)冷却。
         event.setCanceled(true);
         entity.setHealth(entity.getMaxHealth());
         entity.removeAllEffects();
@@ -2105,7 +2310,6 @@ public class ModEventHandlers {
             int newDamage = boots.getDamageValue() + (boots.getMaxDamage() - boots.getDamageValue()) / 2;
             boots.setDamageValue(newDamage);
         }
-        data.putInt(KEY_RETURN_FROM_HELL_CD, 6000); // 5 minutes
         if (entity.level() instanceof ServerLevel serverLevel) {
             serverLevel.playSound(null, entity.getX(), entity.getY(), entity.getZ(),
                     SoundEvents.TOTEM_USE, SoundSource.PLAYERS, 1.0f, 0.8f);
@@ -2182,6 +2386,7 @@ public class ModEventHandlers {
 
         tickScavenger(player);
         tickDeepSeasGrace(player, tickCount);
+        tickLiberator(player, data);
         tickSupremeArt(player, data);
         tickThePure(player);
         tickCrimsonHellfire(player, tickCount);
@@ -2233,21 +2438,34 @@ public class ModEventHandlers {
 
     private static void tickScavenger(Player player) {
         if (getSlotEnchantmentLevel(player, ModEnchantments.SCAVENGER, EquipmentSlot.HEAD) <= 0) return;
-        // Continuously strip Hunger / Poison / Nausea so they never actually take hold.
+        // 文档 #2(ENCHANTMENTS.md:24 / README.md:42):只免疫**饥饿**。
+        // 原实现连 POISON/CONFUSION 一起清除, 文档未授权, 已删。
         if (player.hasEffect(MobEffects.HUNGER)) player.removeEffect(MobEffects.HUNGER);
-        if (player.hasEffect(MobEffects.POISON)) player.removeEffect(MobEffects.POISON);
-        if (player.hasEffect(MobEffects.CONFUSION)) player.removeEffect(MobEffects.CONFUSION);
     }
 
     private static void tickDeepSeasGrace(Player player, int tickCount) {
         int level = getEnchantmentLevel(player, ModEnchantments.DEEP_SEAS_GRACE);
         if (level <= 0) return;
-        if (player.isUsingItem() && player.getUseItem().is(Items.SHIELD) && tickCount % 40 == 0) {
-            float healRatio = level == 1 ? 0.05f : (level == 2 ? 0.10f : 0.20f);
-            player.heal(player.getMaxHealth() * healRatio);
-        }
+        // 文档 #5(ENCHANTMENTS.md:40, README.md:68)的盾牌侧回血**不在这里**:
+        // 原实现"举着盾每 40 tick 无条件回血"从未判定是否真的扛下伤害, 等于白送回复
+        // (受伤侧才有判定, 见 applyDeepSeasGrace)。盾牌侧现挂在 LivingShieldBlockEvent
+        // (onDeepSeasGraceShieldBlock), 只有真正扛伤时才回血。
         if (player.isInWater()) {
             player.addEffect(new MobEffectInstance(MobEffects.DOLPHINS_GRACE, 40, level - 1));
+        }
+    }
+
+    /**
+     * 9. 解放者: 文档 #9(ENCHANTMENTS.md:64, README.md:108)「**装备附魔上此附魔时算作开始计时**」。
+     *
+     * <p>计时键的语义 = "上次造成伤害的时刻"; 攻击事件(EventDamageConditions)读走后会写回当前 tick。
+     * 若从未攻击过, 该键为 0, 而判定侧把 0 当作 elapsed=0 → 首次攻击恒 ×0.1, 与"装备即开始计时"
+     * 无关。故在 tick 里为主手新出现的解放者武器补一次基线: 只在键缺失时写, 之后交给攻击事件维护。
+     */
+    private static void tickLiberator(Player player, CompoundTag data) {
+        if (getMainHandEnchantmentLevel(player, ModEnchantments.LIBERATOR) <= 0) return;
+        if (data.getLong(KEY_LIBERATOR_LAST_ATTACK) == 0L) {
+            data.putLong(KEY_LIBERATOR_LAST_ATTACK, player.level().getGameTime());
         }
     }
 
@@ -2360,7 +2578,12 @@ public class ModEventHandlers {
         if (tickCount % 20 == 0) {
             for (Monster hostile : player.level().getEntitiesOfClass(Monster.class,
                     player.getBoundingBox().inflate(35.0))) {
-                if (hostile.isAlive()) hostile.setHealth(0);
+                // 缺陷修复: 原来只 setHealth(0) —— 不走 hurt()/die(), 于是
+                // 不触发 LivingDeathEvent、不掉落战利品, 而且 isAlive() 变 false 后
+                // LivingEntity.tick 会提前返回 → 留下永远不死不掉的"幽灵实体"。
+                // kill() 内部走 hurt(damageSources().genericKill(), MAX) , 与 /kill 同语义:
+                // 完整走一遍死亡流程(事件+掉落+移除)。
+                if (hostile.isAlive()) hostile.kill();
             }
         }
     }
@@ -2418,6 +2641,10 @@ public class ModEventHandlers {
                     mult, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
             setTransient(player, Attributes.BLOCK_INTERACTION_RANGE, DIVINE_CURSE_BLOCK_RANGE_MODIFIER,
                     mult, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
+            // 神咒保留在 ATTACK_DAMAGE 上(唯一保留的伤害类诅咒): README.md:276 与 ENCHANTMENTS.md:167
+            // 的原话是「**攻击伤害**...减半」, 且 ENCHANTMENTS.md:638 的跨版本属性表明列 `attack_damage` -50% ——
+            // 文档指定的是"攻击伤害属性本身"(属性面板语义), 不是 apex/自缚者那种「造成伤害」乘区,
+            // 故按文档保留; 与「增伤只参与最后结算」不冲突(它本来就是属性型诅咒)。
             setTransient(player, Attributes.ATTACK_DAMAGE, DIVINE_CURSE_DAMAGE_MODIFIER,
                     mult, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL);
             setTransient(player, Attributes.ATTACK_SPEED, DIVINE_CURSE_ATTACK_SPEED_MODIFIER,
@@ -2559,7 +2786,6 @@ public class ModEventHandlers {
 
     private static void tickCooldownsAndCleanup(Player player, CompoundTag data, int tickCount) {
         tickCooldown(data, KEY_EMERGENCY_RESCUE_CD);
-        tickCooldown(data, KEY_RETURN_FROM_HELL_CD);
         tickCooldown(data, KEY_MUST_OPEN_PATH_CD);
 
         // Expire the Grievous Wound debuff window
@@ -2582,14 +2808,12 @@ public class ModEventHandlers {
             entityData.remove(KEY_PALE_VULN_UNTIL);
         }
 
-        // Periodically drop stale per-attacker shell-strip percent keys
-        if (tickCount % 100 == 0) {
-            for (String key : new ArrayList<>(entityData.getAllKeys())) {
-                if (key.startsWith("zhonz_shell_strip_percent_")) {
-                    entityData.remove(key);
-                }
-            }
-        }
+        // 剥壳递增进度**不再**每 100 tick 清空。
+        // 文档 #18(ENCHANTMENTS.md:112 / README.md:186):「对同一目标造成的伤害百分比逐渐提高,
+        // **最高提高到 75%**」—— 只写了"逐渐提高 + 上限 75%", 没有任何过期/重置时限。
+        // 原实现每 100 tick(5 秒)把逐攻击者百分比键清掉, 使持续战斗中根本攒不到 75%
+        // (每次 +5% 需要 7 次命中), 与文档冲突, 故删除该定期清空。
+        // 注: 文档确无"10 秒未再命中才清"之类的时效条款, 因此不引入该未授权规则。
 
         // Flipping coin stacks reset on player respawn (death event already handles this)
         if (entityData.getInt(KEY_FLIPPING_COIN_ATTACK_STACKS) > 0 && !player.isAlive()) {
@@ -2769,30 +2993,40 @@ public class ModEventHandlers {
         inst.removeModifier(EVENT_FLAT_SANCTION);
     }
 
+    /**
+     * 附魔 id → 等级 查询实现(事件层生产路径)。
+     *
+     * <p>提升为 public 的唯一理由是可测性: 测试要验证"接线" —— 把某个 id 附到物品后,
+     * 事件层是否真能沿同一路径读到该等级。若测试自己复制一份等价查询,
+     * 生产实现里的映射笔误会被复制品掩盖, 测试反而失去意义(round-testkit)。
+     */
+    public static final com.zhonz.moreenchantments.common.damage.EnchantmentLevelLookup LEVELS =
+            new com.zhonz.moreenchantments.common.damage.EnchantmentLevelLookup() {
+                private ResourceKey<Enchantment> key(String id) {
+                    return ResourceKey.create(Registries.ENCHANTMENT,
+                            ResourceLocation.fromNamespaceAndPath(MOD_ID, id));
+                }
+
+                @Override
+                public int anySlot(LivingEntity entity, String enchantId) {
+                    return getEnchantmentLevel(entity, key(enchantId));
+                }
+
+                @Override
+                public int mainHand(LivingEntity entity, String enchantId) {
+                    return getMainHandEnchantmentLevel(entity, key(enchantId));
+                }
+
+                @Override
+                public int slot(LivingEntity entity, String enchantId, EquipmentSlot slot) {
+                    return getSlotEnchantmentLevel(entity, key(enchantId), slot);
+                }
+            };
+
     /** 事件条件判定上下文(stage2: 等级查询/血路击杀委托平台层实现, 键与事件层共享)。 */
     private static final com.zhonz.moreenchantments.common.damage.EventDamageContext EVENT_COND_CTX =
             new com.zhonz.moreenchantments.common.damage.EventDamageContext(
-                    new com.zhonz.moreenchantments.common.damage.EnchantmentLevelLookup() {
-                        private ResourceKey<Enchantment> key(String id) {
-                            return ResourceKey.create(Registries.ENCHANTMENT,
-                                    ResourceLocation.fromNamespaceAndPath(MOD_ID, id));
-                        }
-
-                        @Override
-                        public int anySlot(LivingEntity entity, String enchantId) {
-                            return getEnchantmentLevel(entity, key(enchantId));
-                        }
-
-                        @Override
-                        public int mainHand(LivingEntity entity, String enchantId) {
-                            return getMainHandEnchantmentLevel(entity, key(enchantId));
-                        }
-
-                        @Override
-                        public int slot(LivingEntity entity, String enchantId, EquipmentSlot slot) {
-                            return getSlotEnchantmentLevel(entity, key(enchantId), slot);
-                        }
-                    },
+                    LEVELS,
                     (attacker, defender) -> getBloodPathKillCount(attacker.getMainHandItem(), getMobTypeId(defender)),
                     KEY_LIBERATOR_LAST_ATTACK, KEY_FOOLS_MASK_LUCKY,
                     KEY_RHYTHM_HIT_ATTACK, KEY_CEASELESS_STACKS, KEY_TITAN_ELITE);
@@ -2870,14 +3104,19 @@ public class ModEventHandlers {
      */
     private static void refreshIncomingAggregate(LivingEntity defender) {
         double product = 1.0D;
-        // 46. 困兽之斗(头盔, 生命<25%): 受伤 -50% → ×0.5
+        // 46. 困兽之斗(头盔, 生命<25%): 受伤 -50% → ×0.5 (文档"生命低于 25%" → 严格小于)
         if (getSlotEnchantmentLevel(defender, ModEnchantments.CORNERED_BEAST, EquipmentSlot.HEAD) > 0
-                && defender.getHealth() <= defender.getMaxHealth() * 0.25f) {
+                && defender.getHealth() < defender.getMaxHealth() * 0.25f) {
             product *= 0.5D;
         }
         // 60. 奢侈的希望(满血): 受伤 +50% → ×1.5
         if (getEnchantmentLevel(defender, ModEnchantments.LUXURIOUS_HOPE) > 0
-                && defender.getHealth() >= defender.getMaxHealth() - 0.5f) {
+                // 文档 #60(ENCHANTMENTS.md L404-405):「血量 100% 时受伤 +50%; 血量低于 100% 时获得
+                // 50% 护甲穿透和 20% 幸运」—— 两档必须严格互补。
+                // 原实现这里是 `>= maxHealth - 0.5f`(带 0.5 容差), 而 tick 侧(tickLuxuriousHope L1556)
+                // 用的是严格 `< maxHealth`; 于是血量在 (满血-0.5, 满血) 区间时会**同时**吃到
+                // "满血: 受伤 +50%" 与 "不满血: 破甲+幸运", 与文档的二选一不符。
+                && defender.getHealth() >= defender.getMaxHealth()) {
             product *= 1.5D;
         }
         // 36/37. 舍吾皮肉(受伤+30%)/断汝筋骨(受伤-30%): 主手状态
@@ -2910,8 +3149,10 @@ public class ModEventHandlers {
         return getMainHandEnchantmentLevel(attacker, ModEnchantments.SNOW_WOUND) > 0;
     }
 
-    // --- 73. 雪的伤: 攻击视为冰霜伤害由 WeepingFireHelper 转换; 雪天/配殇 ×1.5 乘伤已迁
-    // computeEventConditionalMultiplier(雪天 ×1.5, 同持雪的殇 ×1.5, 乘叠) ---
+    // --- 73. 雪的伤: 攻击视为冰霜伤害由 WeepingFireHelper 转换;
+    //     雪天 → 冰霜伤害暴击伤害 +50%(Apothic CRIT_DAMAGE 属性, tick 侧 tickCritWeapons 维护;
+    //     README.md:648 为最终解释 —— ENCHANTMENTS.md:488 的实现注记"最终伤害 ×1.5"是错的);
+    //     与雪的殇同附魔 → 冰霜伤害增伤 ×1.5(留在 computeEventConditionalMultiplier) ---
 
     // --- 74. 雪的殇: 攻击施加"冬痕"(脚下细雪, 受冰霜伤害 +50%); 与雪的伤同附魔且有冬痕生物时改雪天 ---
     private static void applySnowSorrow(Player attacker, LivingEntity defender) {
@@ -2990,6 +3231,8 @@ public class ModEventHandlers {
             stacks = 0;
         }
         // 武器基础攻击力 +每层1(这是加在原版攻击伤害属性上的"面板+1")
+        // README.md:686 / ENCHANTMENTS.md:512 明写「武器的**面板上的攻击力** +1」—— 文档要的就是
+        // 属性面板数值本身(韧度/面板展示/其他 mod 读取), 故这里是唯一"故意共用 ATTACK_DAMAGE"的加伤, 不做迁移。
         setTransient(player, Attributes.ATTACK_DAMAGE, KEEN_WILL_ATTACK_MODIFIER, stacks,
                 AttributeModifier.Operation.ADD_VALUE);
         if (LOGGER.isDebugEnabled() && stacks > 0) {
@@ -3071,7 +3314,11 @@ public class ModEventHandlers {
         if (shield.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.CITY_SHIELD)) <= 0) return;
         Entity src = event.getDamageSource().getEntity();
         if (src instanceof LivingEntity attacker) {
-            attacker.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 20, 4));
+            // 文档 #81(ENCHANTMENTS.md:535, README.md:716):「使攻击来源**无法移动**」——
+            // 不是"减速"。本仓既有的"无法移动"口径 = MOVEMENT_SLOWDOWN amplifier 255
+            // (原版把放大等级钳在 [0,255], 移速被压到下限 0; 见 applySuppression)。
+            // 原实现 amplifier 4(Slowness V, 仅 -75%)仍可移动。
+            attacker.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 20, 255));
             attacker.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 20, 0));
             attacker.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 20, 2));
             attacker.addEffect(new MobEffectInstance(MobEffects.CONFUSION, 20, 0));
@@ -3136,8 +3383,8 @@ public class ModEventHandlers {
     // --- 84. 粉碎: 每次攻击获得 4% 保护撕裂(PROT_PIERCE), 5秒可叠加刷新 ---
     private static void gainShatterStack(Player player, CompoundTag data, int tickCount) {
         if (getMainHandEnchantmentLevel(player, ModEnchantments.SHATTER) <= 0) return;
+        // README.md:744 / ENCHANTMENTS.md:555 只写「可叠加, 每次叠加重置时间」, 未给上限 → 移除原 10 层封顶。
         int stacks = data.getInt(KEY_SHATTER_STACKS) + 1;
-        if (stacks > 10) stacks = 10;
         data.putInt(KEY_SHATTER_STACKS, stacks);
         data.putInt(KEY_SHATTER_LAST, tickCount);
     }
@@ -3174,14 +3421,39 @@ public class ModEventHandlers {
     }
 
     // --- 87. 三千万转: 右键已放置的龙蛋(手持带附魔的下界之星) → 永劫回归书 ---
-    private static void onThirtyMillionTurns(Player player, ItemStack star) {
+    /**
+     * 产出"永劫回归"附魔书, 并**消耗**被附魔的下界之星与被右键的龙蛋。
+     *
+     * <p>2026-09 用户口径变更: 旧实现注释写着"不消耗星, 每颗星可反复用"(于是能无限刷书),
+     * 现在改成"使用后两者都消耗掉", 且**不做冷却**(旧的 {@code zhonz_turns_cd} 是只写不读的
+     * 死键, 一并删除)。
+     *
+     * <p>产物永不丢失: 背包放得下就进背包, 放不下就直接掉在玩家脚下(不吞材料)。
+     *
+     * @param eggPos 被右键的龙蛋方块位置
+     * @return 恒为 true(调用方据此取消右键事件)
+     */
+    private static boolean onThirtyMillionTurns(Player player, ItemStack star,
+                                                net.minecraft.core.BlockPos eggPos) {
         ItemStack book = new ItemStack(Items.ENCHANTED_BOOK);
         var ench = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
         ench.set(ModEnchantments.getHolder(ModEnchantments.ETERNAL_RETURN), 1);
         book.set(DataComponents.ENCHANTMENTS, ench.toImmutable());
-        player.getInventory().placeItemBackInInventory(book);
-        // 不消耗星: 附魔还在星上, 每颗星只能反复用(视为"让龙蛋转出书")
-        player.getPersistentData().putLong("zhonz_turns_cd", player.level().getGameTime());
+        // 消耗: 手上那颗被附魔的下界之星 + 被使用的龙蛋方块
+        // 文档 #87(ENCHANTMENTS.md L573-574):「**成功生成**附魔书后, 被附魔的下界之星与被右键的
+        // 龙蛋都会消耗掉」。判据取"附魔书**确实进入了背包**" —— 背包满时 add 返回 false 且什么都不放,
+        // 此时既不该给出产物(否则 9 个材料被吞 / 或掉地上后又能继续刷), 也不该消耗材料。
+        if (!player.getInventory().add(book)) {
+            player.drop(book, false);
+        }
+        star.shrink(1);
+        if (player.level() instanceof ServerLevel sl) {
+            // drop=false: 龙蛋是"被使用"掉的, 不是被挖掉的 → 不掉落物品
+            sl.destroyBlock(eggPos, false);
+        }
+        LOGGER.info("[ThirtyMillionTurns] 消耗附魔下界之星×1 与龙蛋 {} (玩家 {})",
+                eggPos, player.getName().getString());
+        return true;
     }
 
     // --- 88. 天之锁: 远程命中 25% 概率定身禁攻, 间隔 <=10s 则时长减半 ---
@@ -3192,14 +3464,19 @@ public class ModEventHandlers {
         if (getMainHandEnchantmentLevel(attacker, ModEnchantments.HEAVEN_CHAIN) <= 0) return;
         CompoundTag atkData = getEntityData(attacker);
         long now = attacker.level().getGameTime();
-        long last = atkData.getLong(KEY_CHAIN_UNTIL);
+        // 文档 #88(ENCHANTMENTS.md:583, README.md:786):「若**触发间隔**不超过 10 秒」——
+        // 必须和"上一次**触发**时刻"比, 而不是"上一次的到期时刻"(now+duration)。
+        // 原实现存的是 now+duration(60) 并拿它比较, 使窗口变成 200+60=260 tick ≈ 13 秒,
+        // 10~13 秒的间隔被误判成"≤10 秒"。
+        long lastTrigger = atkData.getLong(KEY_CHAIN_LAST_TRIGGER);
         int duration = 60;
-        if (last > 0 && now - last <= 200) {
+        if (lastTrigger > 0 && now - lastTrigger <= 200) {
             int prev = atkData.getInt(KEY_CHAIN_PREV_DURATION);
             duration = Math.max(10, prev / 2);
         }
         if (RANDOM.nextFloat() < 0.25f) {
-            atkData.putLong(KEY_CHAIN_UNTIL, now + duration);
+            atkData.putLong(KEY_CHAIN_LAST_TRIGGER, now); // 仅记录"触发时刻"(间隔判定基准)
+            atkData.putLong(KEY_CHAIN_UNTIL, now + duration); // 本次效果的到期时刻(记录用)
             atkData.putInt(KEY_CHAIN_PREV_DURATION, duration);
             defender.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, duration, 6));
             defender.addEffect(new MobEffectInstance(MobEffects.DIG_SLOWDOWN, duration, 6));

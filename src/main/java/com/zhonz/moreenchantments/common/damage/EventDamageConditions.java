@@ -45,6 +45,9 @@ public final class EventDamageConditions {
             CompoundTag data = EntityDataStorage.getData(attacker);
             long currentTick = attacker.level().getGameTime();
             long lastAttackTick = data.getLong(ctx.keyLiberatorLastAttack);
+            // 无记录(==0)= 从未攻击过。文档 #9(ENCHANTMENTS.md:64, README.md:108)要求"装备附魔时
+            // 算作开始计时", 基线由平台层 tick 在"主手新出现解放者武器且键缺失"时补写(见 tickLiberator);
+            // 故这里保留 0 → elapsed=0 的退化分支即可(基线补写后不会再走到)。
             long elapsedTicks = lastAttackTick == 0 ? 0 : currentTick - lastAttackTick;
             double elapsedSeconds = elapsedTicks / 20.0;
             double multiplier;
@@ -93,9 +96,11 @@ public final class EventDamageConditions {
             rhythmData.remove(ctx.keyRhythmHit);
             product *= 1.5D;
         }
-        // 73. 雪的伤(Snow Wound): 雪天 → ×1.5; 同持雪的殇 → 再 ×1.5(乘叠 ×2.25)
+        // 73. 雪的伤(Snow Wound): 与雪的殇同附魔时"造成的冰霜伤害增伤 50%" → ×1.5。
+        // 注意: "雪天"的那一半**不在本乘伤通道里**。README.md:648 与 ENCHANTMENTS.md:485 都写
+        // "在雪天造成的冰霜伤害**暴击伤害**增加 50%"(ENCHANTMENTS.md:488 的实现注记写"最终伤害 ×1.5"
+        // 是错的), 故它改走 Apothic CRIT_DAMAGE 属性通道, 由平台层 tickCritWeapons 常驻维护。
         if (ctx.levels.mainHand(attacker, EnchantIds.SNOW_WOUND) > 0) {
-            if (isSnowWeather(attacker)) product *= 1.5D;
             if (ctx.levels.mainHand(attacker, EnchantIds.SNOW_SORROW) > 0) product *= 1.5D;
         }
         return product;
@@ -118,7 +123,12 @@ public final class EventDamageConditions {
         int chargerLevel = ctx.levels.mainHand(attacker, EnchantIds.CHARGER);
         if (chargerLevel > 0) {
             double speed = attacker.getDeltaMovement().horizontalDistance() / 0.1;
-            percent += speed * chargerLevel * 0.5;
+            // 缺陷修复: 速度非有限(例如被别的 mod/命令塞入 NaN 向量)时加伤会变成 NaN,
+            // 而 NaN 能穿透 UnifiedDamageEngine 的默认通道早返回判定 → 最终伤害 NaN。
+            // 这里守卫成 0 加成, 保证规则层永不产出非有限值。
+            if (Double.isFinite(speed)) {
+                percent += speed * chargerLevel * 0.5;
+            }
         }
         // 11. 我的海疆: 三叉戟攻击额外 +60%
         if (ctx.levels.mainHand(attacker, EnchantIds.MY_SEA_DOMAIN) > 0
@@ -182,8 +192,8 @@ public final class EventDamageConditions {
 
     // ===== 纯 MC 辅助 =====
 
-    /** 是否"雪天/雨天"判定(任意群系下雨视作下雪)。 */
-    private static boolean isSnowWeather(LivingEntity entity) {
+    /** 是否"雪天/雨天"判定(任意群系下雨视作下雪)。雪的伤雪天暴击伤害加成(tick 侧)亦复用此口径。 */
+    public static boolean isSnowWeather(LivingEntity entity) {
         return entity.level().isRaining();
     }
 

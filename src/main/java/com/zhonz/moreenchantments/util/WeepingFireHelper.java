@@ -86,6 +86,12 @@ public final class WeepingFireHelper {
             if (wearsUnyieldingFate(le)) {
                 return new AttackerType(le, TRUE_DAMAGE, 6.0f);
             }
+            // 挂(hang): 文档 #27(ENCHANTMENTS.md L162)「在背包内时…攻击造成真实伤害」。
+            // 原实现完全没有这条路径(真伤只由唯有命运产生), 属**文档要求但未实现**;
+            // 文档未给倍率, 故取 ×1。放在最后 → 不影响哭泣之子/雪的伤/唯有命运既有的优先级。
+            if (hasHangInInventory(le)) {
+                return new AttackerType(le, TRUE_DAMAGE, 1.0f);
+            }
         }
         // 投射物: 直接实体是箭/三叉戟/雪球等
         if (direct instanceof Projectile proj) {
@@ -100,6 +106,10 @@ public final class WeepingFireHelper {
                 if (wearsUnyieldingFate(shooter)) {
                     return new AttackerType(shooter, TRUE_DAMAGE, 6.0f);
                 }
+                // 挂(hang) 的"攻击"不限于近战 → 远程同样转为真伤(同上, ×1)
+                if (hasHangInInventory(shooter)) {
+                    return new AttackerType(shooter, TRUE_DAMAGE, 1.0f);
+                }
             }
             // 投掷三叉戟: 掷出后主手已空, 附魔在三叉戟自身物品上
             if (direct instanceof ThrownTrident tt && !tt.getWeaponItem().isEmpty()
@@ -112,10 +122,32 @@ public final class WeepingFireHelper {
         return null;
     }
 
+    /**
+     * 挂(hang) 的触发条件: **背包内**有带该附魔的物品
+     * (文档 #27「在背包内时获得无敌、飞行、速度 7、力量 255;周围 35 格内的敌对生物被斩杀;攻击造成真实伤害」)。
+     *
+     * <p>只有玩家有"背包"; 其它生物没有该附魔的载体, 因此对非玩家恒为 false。
+     */
+    public static boolean hasHangInInventory(LivingEntity entity) {
+        if (!(entity instanceof net.minecraft.world.entity.player.Player player)) return false;
+        var holder = ModEnchantments.getHolder(ModEnchantments.HANG);
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (!stack.isEmpty() && stack.getEnchantmentLevel(holder) > 0) return true;
+        }
+        return false;
+    }
+
     private static boolean hasEnchant(LivingEntity entity, EquipmentSlot slot, ResourceKey<net.minecraft.world.item.enchantment.Enchantment> ench) {
         ItemStack stack = entity.getItemBySlot(slot);
         if (stack.isEmpty()) return false;
-        return stack.getEnchantmentLevel(ModEnchantments.getHolder(ench)) > 0;
+        // 缺陷修复(03-E2 同族, 最后两处客户端可达路径的收口):
+        // 本方法经 isPiercingWeepingFire(48) 被 FireImmunePierceMixin:28 / FireResistancePierceMixin:29
+        // 的 @Redirect 调用 —— 目标是 Entity.isInvulnerableTo / LivingEntity.hurt, 两者都不是服务端专属方法,
+        // 远程客户端的预测路径会进来; 而 getHolder 依赖 ServerLifecycleHooks.getCurrentServer(),
+        // 远程客户端没有服务端句柄 → NPE。
+        // 改走不依赖 Holder 的读法(直接读 ItemStack 组件并比对 registry key), 两侧都可用、永不抛异常。
+        return ModEnchantments.getLevel(stack, ench) > 0;
     }
 
     /** 唯有命运: 任一身装备有该附魔(胸甲优先, 但为稳判四件都查)。 */

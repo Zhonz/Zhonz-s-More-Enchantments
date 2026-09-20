@@ -27,6 +27,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *  - Release to throw the mace as a projectile entity
  *  - When it hits a block or entity, deal 1000% damage and teleport the thrower to the hit location
  *  - 5 second cooldown (like a shield)
+ *
+ * <p>附魔判定统一走 {@code ModEnchantments.getLevel(stack, key)}(直接读 ItemStack 组件):
+ * 本类注入的 use / onUseTick / getUseDuration / getUseAnimation / releaseUsing 客户端同样会执行
+ * (右键预测、蓄力刻度与投掷姿势动画), 而远程客户端没有服务器 registry,
+ * 旧的 {@code getHolder} 路径会 NPE。
  */
 @Mixin(Item.class)
 public abstract class MaceItemMixin {
@@ -52,7 +57,7 @@ public abstract class MaceItemMixin {
         ItemStack stack = player.getItemInHand(hand);
         // Only applies to Mace items with the Must Open Path enchantment
         if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
-        int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
+        int mustOpenPathLevel = ModEnchantments.getLevel(stack, ModEnchantments.MUST_OPEN_PATH);
         if (mustOpenPathLevel <= 0) return;
 
         // 检查冷却
@@ -70,7 +75,7 @@ public abstract class MaceItemMixin {
     private void onUseTick(Level level, LivingEntity entity, ItemStack stack, int remainingUseDuration, CallbackInfo ci) {
         if (!(entity instanceof Player player)) return;
         if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
-        int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
+        int mustOpenPathLevel = ModEnchantments.getLevel(stack, ModEnchantments.MUST_OPEN_PATH);
         if (mustOpenPathLevel <= 0) return;
 
         CompoundTag data = EntityDataStorage.getEntityData(player);
@@ -84,7 +89,7 @@ public abstract class MaceItemMixin {
     @Inject(method = "getUseDuration", at = @At("RETURN"), cancellable = true)
     private void modifyUseDuration(ItemStack stack, LivingEntity entity, CallbackInfoReturnable<Integer> cir) {
         if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
-        int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
+        int mustOpenPathLevel = ModEnchantments.getLevel(stack, ModEnchantments.MUST_OPEN_PATH);
         if (mustOpenPathLevel <= 0) return;
         cir.setReturnValue(72000);
     }
@@ -95,7 +100,7 @@ public abstract class MaceItemMixin {
     @Inject(method = "getUseAnimation", at = @At("RETURN"), cancellable = true)
     private void modifyUseAnimation(ItemStack stack, CallbackInfoReturnable<UseAnim> cir) {
         if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
-        int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
+        int mustOpenPathLevel = ModEnchantments.getLevel(stack, ModEnchantments.MUST_OPEN_PATH);
         if (mustOpenPathLevel <= 0) return;
         cir.setReturnValue(UseAnim.SPEAR);
     }
@@ -107,7 +112,7 @@ public abstract class MaceItemMixin {
     private void onReleaseUsing(ItemStack stack, Level level, LivingEntity entity, int timeLeft, CallbackInfo ci) {
         if (!(entity instanceof Player player)) return;
         if (!(stack.getItem() instanceof net.minecraft.world.item.MaceItem)) return;
-        int mustOpenPathLevel = stack.getEnchantmentLevel(ModEnchantments.getHolder(ModEnchantments.MUST_OPEN_PATH));
+        int mustOpenPathLevel = ModEnchantments.getLevel(stack, ModEnchantments.MUST_OPEN_PATH);
         if (mustOpenPathLevel <= 0) return;
 
         CompoundTag data = EntityDataStorage.getEntityData(player);

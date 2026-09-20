@@ -30,10 +30,10 @@ public final class TickBonusRules {
         return (light / 15.0) * 1.5;
     }
 
-    /** 46. 困兽之斗(头盔, 生命<25%): +60%。 */
+    /** 46. 困兽之斗(头盔, 生命<25%): +60%。文档/README 写"生命**低于** 25%" → 严格小于。 */
     public static double corneredBeast(EnchantmentLevelLookup lv, LivingEntity entity) {
         boolean active = lv.slot(entity, EnchantIds.CORNERED_BEAST, EquipmentSlot.HEAD) > 0
-                && entity.getHealth() <= entity.getMaxHealth() * 0.25f;
+                && entity.getHealth() < entity.getMaxHealth() * 0.25f;
         return active ? 0.60 : 0.0;
     }
 

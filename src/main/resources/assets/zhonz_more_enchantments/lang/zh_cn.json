@@ -88,8 +88,8 @@
     "enchantment.zhonz_more_enchantments.burning_dusk.desc": "对燃烧目标叠加10%火焰易伤（可叠加），同时附魔孤独的正午时效果×2",
     "enchantment.zhonz_more_enchantments.weeping_child": "比任何人都要悲伤的哭泣之子",
     "enchantment.zhonz_more_enchantments.weeping_child.desc": "主手持有时免疫火焰伤害；攻击（含弓弩/三叉戟）造成哭泣之火（真火焰伤害，无视火免与抗火），点燃双方，自身燃烧时伤害+200%",
-    "death.attack.weeping_fire": "%1$s被哭泣之火烧死了",
-    "death.attack.weeping_fire.player": "%1$s被%2$s的哭泣之火烧死了",
+    "death.attack.weeping_fire": "%1$s被%2$s的哭泣之火烧死了",
+    "death.attack.weeping_fire.player": "%1$s在与%2$s战斗时被哭泣之火吞噬了",
 
     "enchantment.zhonz_more_enchantments.apex": "\"顶点\"§r",
     "enchantment.zhonz_more_enchantments.apex.desc": "主手或副手持有时闪避率+100%，伤害+1000%，移动速度+100%",
@@ -188,13 +188,15 @@
     "enchantment.zhonz_more_enchantments.selfish_clear_sky": "自私澄澈天光",
     "enchantment.zhonz_more_enchantments.selfish_clear_sky.desc": "穿戴时受到的治疗量在最终生效时也会受到暴击率与暴击伤害加成；身上任意一件带有其他套装附魔（沉默/狂热/噤声/热烈）时，该治疗量额外受到增伤加成",
 
-    "death.attack.frost": "%1$s被冻僵了",
-    "death.attack.frost.player": "%1$s被%2$s冻僵了",
-    "death.attack.true_damage": "%1$s被真实伤害抹除了",
-    "death.attack.true_damage.player": "%1$s被%2$s的真实伤害抹除了",
+    "death.attack.frost": "%1$s被%2$s的冰霜冻僵了",
+    "death.attack.frost.player": "%1$s在与%2$s战斗时冻僵了",
+    "death.attack.true_damage": "%1$s被%2$s的真实伤害抹除了",
+    "death.attack.true_damage.player": "%1$s在与%2$s战斗时被真实伤害抹除了",
 
     "enchantment.zhonz_more_enchantments.prophets_call.warning": "§c⚠ 检测到 %s 个敌对生物！",
 
     "attribute.zhonz_more_enchantments.bonus_damage": "伤害加值",
-    "attribute.zhonz_more_enchantments.damage_multiplier": "伤害倍率"
+    "attribute.zhonz_more_enchantments.damage_multiplier": "伤害倍率",
+    "attribute.zhonz_more_enchantments.flat_damage": "固定加伤",
+    "attribute.zhonz_more_enchantments.incoming_damage": "受击倍率"
 }

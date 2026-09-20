@@ -48,6 +48,11 @@ public class ItemStackDurabilityMixin {
         if (amount <= 0) return;
         ItemStack self = (ItemStack)(Object)this;
         if (!self.isDamageableItem()) return;
+        // 缺陷修复(与 03-E2 同类): 本注入点是 @At("HEAD"), 位于原版"非客户端才扣耐久"的判定**之前**,
+        // 因此远程服务器客户端的预测路径也会进来; 而 ModEnchantments.getHolder 依赖
+        // ServerLifecycleHooks.getCurrentServer() —— 远程客户端没有服务端句柄 → NPE。
+        // 耐久扣减本就由服务端裁决, 所以客户端直接放行, 不参与任何附魔判定。
+        if (entity != null && entity.level().isClientSide()) return;
 
         // 耐心: 举盾超过5秒后,下一次抵挡伤害不消耗盾牌耐久
         if (self.is(Items.SHIELD)) {

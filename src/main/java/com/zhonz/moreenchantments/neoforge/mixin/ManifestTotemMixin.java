@@ -25,6 +25,12 @@ public abstract class ManifestTotemMixin {
     @Inject(method = "checkTotemDeathProtection", at = @At("HEAD"))
     private void zhonz$preTotem(DamageSource source, CallbackInfoReturnable<Boolean> cir) {
         LivingEntity self = (LivingEntity) (Object) this;
+        // 方案(a) 图腾免死是服务端权威逻辑; 且 ManifestHelper 内部解析 Holder,
+        // 远程客户端没有服务器 registry 会 NPE → 客户端不登记(顺带清掉标记)。
+        if (self.level().isClientSide()) {
+            zhonz$manifestTriggered = false;
+            return;
+        }
         zhonz$manifestTriggered = ManifestHelper.holdsManifest(self);
     }
 

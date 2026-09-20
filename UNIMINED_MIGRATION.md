@@ -277,6 +277,64 @@ tickSupremeArt 属性部分/tickCorneredBeast 治疗+50% —— 逐项 grep 复�
 取最大生命 20% 保证存活)、低血用例起始生命同为 20%、断言"设定生命 − 剩余生命 == 期望"
 (而非事件返回值, 以覆盖中间环节)。
 
+**round-eternal 扩充 4 → 6 用例**(补齐受击侧从未自动化的项):
+| 用例 | 条件 | 期望 |
+|---|---|---|
+| `unyielding_survive` | 胸甲带**唯有命运**(#75)·吃 10× 最大生命伤害 | 存活且生命 ≥1 |
+| `unyielding_negative` | 同款胸甲**不带**该附魔 | 直接死亡(反例) |
+
+> 「唯有命运」此前只在客户端手测过; `testall` 覆盖的是**攻击侧** ×6 真伤, 受击侧"生命不会低于 1"
+> 从未进自动化。伤害用 `damageSources().generic()`(不能用 `kill()`: 其伤害带
+> `BYPASSES_INVULNERABILITY`, 会让保命类断言失真)。
+
+## 6.11 「永劫回归」#59 移植缺陷与修复(round-eternal)
+
+1.20.1 双平台原先**逐字照抄**了 1.21 的旧实现(运行中递归删世界目录), 因而是**同一个缺陷**;
+现三平台统一改为共享 `common/eternal/EternalReturnHelper`(触发登记 + 启动前重建),
+各自仅保留"附魔判定 + 转发"的 mixin:
+
+| 平台 | 附魔判定 | 重建接线 |
+|---|---|---|
+| NeoForge 1.21.1(主工程) | `ModEnchantments.getHolder(ETERNAL_RETURN)`(数据驱动) | `EternalReturnEvents.onServerAboutToStart` |
+| Forge 1.20.1 | `ForgeRegistries.ENCHANTMENTS` + `EnchantmentHelper` | `EnchantWiring1201.onServerAboutToStart` |
+| NeoForge 1.20.1 | 同上 | 同上 |
+
+两平台的 `ServerAboutToStartEvent`(Forge 1.20.1 亦为 `net.minecraftforge.event.server.*`)在
+**世界加载之前**触发, 此时句柄未占用 → 删除可靠; 且不再有"halt 保存流程把地形写回"的竞态。
+平台差异实测: 1.20.1 侧 API(`PlayerList.saveAll` / `getWorldPath` / `TickTask` / `halt`)全部存在,
+compile ✅。
+
+## 6.12 ⚠️ 1.20.1 双平台曾**完全无法启动**(round-eternal 实跑发现并修复)
+
+> 6.8 表格里"1.20.1 `Done (27.1s)` ✅"是**这些缺陷引入之前**的记录(平台 `run/server/logs/latest.log`
+> 停在 09-08/09-09)。round-close 新增"自定义伤害类型 + WeepingFireMixin 三路重写"之后,
+> **再没有人真的启动过平台服务端** —— 只跑了 `compileJava`。本次实跑 `gradlew runServer`,
+> 一次暴露 4 个缺陷:
+
+| # | 缺陷 | 现象 |
+|---|---|---|
+| A | `WeepingFireMixin` 把 `AttackerType` 写成 **mixin 包内的嵌套 record** | `IllegalClassLoadError: ...WeepingFireMixin$AttackerType is in a defined mixin package ... cannot be referenced directly` → 启动崩。注入方法的返回类型被目标类引用, JVM 必须直接加载它, Mixin 拒绝。**修复**: 提到 mixin 包外(`AttackerType1201`) |
+| B | `DamageTypes1201` 用 `DeferredRegister.create(Registries.DAMAGE_TYPE, MODID)` | `Unable to find registry with key minecraft:damage_type` → FATAL 回滚 VANILLA。1.20.1 的 damage_type 是**数据包注册表**, 不在 Forge `GameData` 里。**修复**: 只留 `ResourceKey` 常量, 与 1.21 一样纯数据包驱动 |
+| C | 平台资源缺 `pack.mcmeta` | `Missing data pack mod:zhonz_more_enchantments` → `datapack list` 里没有本 mod → 自定义伤害类型与 `tags/damage_type/*` **全部不存在**。**修复**: 各加 `pack.mcmeta`(pack_format 15) |
+| D | 4 个附魔用 `EnchantmentCategory.WEARABLE`(`eternal_return`/`manifest`/`prophets_call`/`thirty_million_turns`) | 1.20.1 没有"图腾 / 下界之星 / 山羊角"分类(WEARABLE 只认盔甲/鞘翅/头颅) → `canEnchant` 恒 false → **装不上去**(`/enchant` 报 cannot support that enchantment)。**修复**: 新增 `ItemBoundEnchantment`(覆写 `canEnchant(ItemStack)`, 谓词精确表达载体, 对齐 1.21 的 `supported_items`) |
+
+**实测(修复后, 两平台都跑过)**:
+- Forge 1.20.1 与 NeoForge 1.20.1 均 `Done`, 无 FATAL
+- `datapack list` → 含 **`mod:zhonz_more_enchantments`**(修复前是 4 个, 没有本 mod)
+- `damage @e 1 zhonz_more_enchantments:true_damage` → Applied ✅;`frost` 对牛 → Applied ✅
+  (对僵尸报 invulnerable 是僵尸自身的冰冻免疫, 说明类型已解析)
+- NeoForge 1.20.1 载体限定:
+  | 操作 | 结果 |
+  |---|---|
+  | 图腾 + `eternal_return` | Applied ✅ |
+  | 图腾 + `manifest` | Applied ✅ |
+  | 下界之星 + `thirty_million_turns` | Applied ✅ |
+  | 钻石剑 + `eternal_return` | `cannot support that enchantment` ✅(反例) |
+- `debug.log` → `Mixing TotemUseMixin ... into net.minecraft.world.item.Item` ✅
+
+> **规则(以后照做)**: 平台侧改动的验收 = `compileJava` **+ 一次真实 `runServer`**。
+> 最低成本的检查: 看 `platforms/*/run/server/logs/latest.log` 的修改日期。
+
 ## 五、风险与缓解
 - 附魔 JSON 无法跨版本 → 1.20.1 代码注册需重写,工作量≈新实现;建议按"核心 89 个机制清单"驱动逐条移植,并复用 ENCHANTMENTS.md。
 - mixin 字节码目标差异 → 双 mixin 组 + 单测逐版本跑。

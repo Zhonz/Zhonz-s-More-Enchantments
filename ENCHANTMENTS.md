@@ -18,6 +18,7 @@
 - **可附魔**:攻击伤害 ≥ 7 的近战武器
 - **效果**:攻击造成原伤害 **100000 倍**的伤害,随后武器减少等同于伤害量的耐久度
 - **稀有度**:宝藏附魔
+- **实现**:门限读的是**武器自身面板攻击力**(`ATTACK_DAMAGE` ≥ 7,对应 README「可附魔:攻击伤害 ≥ 7 的近战武器」);`apex` / `self_bound` / `accelerated_future` / `silenced_heavenfall` 的增伤已迁入本模组独立乘区 `bonus_damage`,不再抬高该面板数值,故这四个附魔**不再**为终结开门(与 README 口径一致)
 
 ### 2. 食腐者 (Scavenger) — `scavenger`
 - **可附魔**:头盔
@@ -73,7 +74,7 @@
 
 ### 11. "我的海疆" (My Sea Domain) — `my_sea_domain`
 - **可附魔**:三叉戟
-- **效果**:攻击额外造成原伤害 **60%** 的伤害;使被攻击方在 10 秒内受到的伤害增加 30%,时间越长伤害增加越高,**最多 30 秒增加到 60%**,效果共持续 60 秒;可被重复添加刷新效果时间
+- **效果**:攻击额外造成原伤害 **60%** 的伤害;使被攻击方在 10 秒内受到的伤害增加 30%,时间越长伤害增加越高,**最多 30 秒增加到 60%**,效果共持续 **20 秒**(400 tick);可被重复添加刷新效果时间 —— 每次命中重置 20 秒**刷新窗口**(持续命中则不失效),但易伤的递增起点不变,停手 20 秒才过期
 - **稀有度**:宝藏附魔
 - **灵感**:明日方舟"引星棘刺"三技能
 
@@ -166,6 +167,7 @@
 - **可附魔**:任意正常可被附魔的物品
 - **效果**:耐久每秒降低 1%;攻击速度、挖掘速度、触摸范围、攻击伤害、可破坏方块硬度**减半**;蓄力速度、冷却时间**翻倍**
 - **稀有度**:诅咒附魔
+- **实现**:攻击伤害一项走原版 `minecraft:attack_damage` **−50%**(文档要的就是「面板上的攻击伤害减半」, 故与 apex 等**相反**、**刻意共用**这个共享属性);攻击速度/挖掘速度/触摸范围/可破坏方块硬度同样减半,蓄力速度 `DRAW_SPEED` −50%、冷却 `COOLDOWN_REDUCTION` −100%
 
 ### 29. 倏忽恩赐 (Fleeting Grace) — `fleeting_grace`
 - **可附魔**:盔甲
@@ -290,7 +292,7 @@
 - **可附魔**:武器(主手/副手)
 - **效果**:闪避率 +100%;造成伤害 +1000%;移动速度 +100%
 - **稀有度**:无法正常获取,同"挂"
-- **实现**:`DODGE_CHANCE` +1.00 与 `ATTACK_DAMAGE` ×11、`MOVEMENT_SPEED` +100% 属性修饰(已按此实现)
+- **实现**:`DODGE_CHANCE` +1.00 与 `MOVEMENT_SPEED` +100% 属性修饰;造成伤害 ×11 走本模组**独立乘区** `bonus_damage`(+10.0 → ×(1+10)),**不再写共享的 `ATTACK_DAMAGE`** —— 独立乘区只参与最终结算, 从而兼容其他模组的武器/装备(README 开篇承诺)
 
 ### 46. 困兽之斗 (Cornered Beast) — `cornered_beast` ✅
 - **可附魔**:头盔
@@ -327,7 +329,7 @@
 - **可附魔**:护腿
 - **效果**:台阶高度 -1;造成伤害 -90%;移动速度 -50%
 - **稀有度**:诅咒附魔
-- **实现**:`step_height`/`attack_damage`/`movement_speed` 三属性常驻修饰
+- **实现**:`step_height` -1 与 `movement_speed` -50% 属性常驻修饰;造成伤害 -90%(×0.1)走本模组**独立乘区** `bonus_damage`(-0.9),**不再写共享的 `ATTACK_DAMAGE`**(同 apex:独立乘区只参与最终结算, 兼容其他模组)
 
 ### 52. 极速攀升 (Rapid Ascent) — `rapid_ascent` ✅
 - **可附魔**:靴子
@@ -340,7 +342,7 @@
 - **效果**:增伤 = 闪避率 × 2;攻速 = 闪避率(如 80% 闪避 → +160% 伤害 +80% 攻速)
 - **稀有度**:宝藏附魔
 - **灵感**:边狱巴士 拇指父辈 瓦伦希娜
-- **实现**:读取 Apothic `DODGE_CHANCE` 当前值,动态映射到 `attack_damage`/`attack_speed` 修饰
+- **实现**:读取 Apothic `DODGE_CHANCE` 当前值,动态映射到 `attack_speed` 修饰;增伤(闪避率 × 2)走本模组**独立乘区** `bonus_damage`(×(1+闪避率×2)),**不再写共享的 `ATTACK_DAMAGE`**(同 apex)
 
 ---
 
@@ -383,10 +385,31 @@
 
 ### 59. "永劫回归" — `eternal_return` ✅
 - **可附魔**:不死图腾
-- **效果**:主手持有时右键,将所有人踢出世界,保留所有玩家的背包/经验等内容,但重新按原种子生成世界
+- **效果**:主手持有时右键,将所有人踢出世界;**除玩家数据外一切按原种子完全还原** ——
+  所有维度的地形、维度原有生物(含末影龙等 BOSS)、时间天气与游戏规则都回到初始状态。
+  玩家数据(背包/经验/末影箱/进度/统计)完整保留
 - **稀有度**:无法正常获得,同"挂"
 - **灵感**:崩坏星穹铁道
-- **实现**:`TotemUseMixin`(踢出玩家 → 删除世界 → 停服,重启按种子重建)
+- **实现**:`TotemUseMixin`(仅**主手**;副手不触发)→ `common/eternal/EternalReturnHelper`
+  - **触发**:保存玩家数据 → 写待重置标记 `zhonz_eternal_return.flag`(游戏根目录)→ 踢出所有玩家 → 2 tick 后停服
+  - **重建**:下次启动、世界加载之前(`ServerAboutToStartEvent`)清空除玩家数据外的一切:
+    - **删除各维度数据**:`region/ entities/ poi/ data/ DIM1/ DIM-1/`
+      (实体目录一并删除 → 各维度原有生物全部清空, 由世界按原种子重新生成)
+    - **`level.dat` 只保留原种子与加载必需字段**,其余回到初始值:
+      时间/天气/游戏规则/袭击/流浪商人计时/**末影龙战斗状态 `DragonFight`** ——
+      因此末影龙可以重新挑战(旧实现在 level.dat 里留着 `DragonKilled=1`, 龙不会重生)
+    - **保留**:`playerdata/`(背包/经验/末影箱)、`advancements/`、`stats/`、`datapacks/`、`serverconfig/`
+      与 `level.dat` 的原种子
+    - **模组自定义维度同样被清掉**:删除是白名单式的(只保留上面那几个条目), 所以
+      `dimensions/<命名空间>/<id>/` 也会被移除 —— "所有维度"都重置
+- **为什么分两步(1.3.2 前的真实缺陷, 1.3.3 修复)**:
+  1. **运行中删不掉** —— Windows 上 `session.lock` / `region/*.mca` 被本进程持有句柄,`File.delete()`
+     只返回 `false` 且**不抛异常**(旧代码丢掉了返回值 → 静默失败);即便删掉一部分,紧随的
+     `server.halt()` 保存流程会把内存里的区块写回磁盘,世界"复活"。
+  2. **玩家数据被一起删掉** —— 背包/经验在 `world/playerdata/<uuid>.dat`,旧实现删掉整个 `world/` →
+     与本文档"保留所有玩家的背包、经验等内容"直接矛盾。
+- **验证**:`/zhonztest eternaltest`(8 用例)+ `/zhonztest eternaltest live`(真实触发一次, 跨重启核对)
+  —— 详见第九章"验证现状"
 
 ### 60. "奢侈的希望" — `luxurious_hope` ✅
 - **可附魔**:盔甲
@@ -427,6 +450,7 @@
 ### 67. 噤声击坠天堂 — `silenced_heavenfall` ✅
 - **可附魔**:武器
 - **效果**:获得等同于暴击率的暴击伤害和增伤;**加强档**:当身上任意一件带有**其他**套装附魔(沉默/狂热/热烈/自私)时,改为暴击率 ×2 的暴击伤害和增伤
+- **实现**:暴击伤害走 Apothic `CRIT_DAMAGE` 属性;增伤(等同暴击率, 联动 ×2)走本模组**独立乘区** `bonus_damage`(×(1+暴击率×联动倍率)),**不再写共享的 `ATTACK_DAMAGE`**(同 apex;并见 #1 终结门限说明)
 - **套装**:暴击五件套之一
 
 ### 68. "?!合合!?" — `auto_merge` ✅
@@ -490,7 +514,7 @@
 - **可附魔**:武器
 - **效果**:攻击时临时使武器面板攻击力 +1,持续 10 秒,可叠加
 - **稀有度**:宝藏附魔
-- **实现**:`zhonz_keen_stacks` 数据,命中 +1 层(≤20),10s 无攻击清零,最终伤害 +层数
+- **实现**:`zhonz_keen_stacks` 数据,命中 +1 层(≤20),10s 无攻击清零;每层以 `ATTACK_DAMAGE`(+1, ADD_VALUE)体现为**武器面板攻击力 +层数**(README 明写「面板上的攻击力」, 故这是本模组唯一**故意**共用 `ATTACK_DAMAGE` 的加伤, 与 apex 等的独立乘区相反)
 
 ### 78. 锋化 — `sharpen` ✅
 - **可附魔**:武器
@@ -549,10 +573,13 @@
 
 ### 87. 三千万转 — `thirty_million_turns` ✅
 - **可附魔**:下界之星(附魔在星上,非龙蛋)
-- **效果**:手持带三千万转附魔的下界之星,右键已放置的龙蛋时,获得一本"永劫回归"附魔书
+- **效果**:手持带三千万转附魔的下界之星,右键已放置的龙蛋时,获得一本"永劫回归"附魔书;
+  **成功生成附魔书后,被附魔的下界之星与被右键的那颗龙蛋都会消耗掉**(两者一起消失)
 - **稀有度**:宝藏附魔
 - **灵感**:崩坏星穹铁道《耀斑》歌词
-- **实现**:`PlayerInteractEvent.RightClickBlock` 右键 `minecraft:dragon_egg`,背包放入 `eternal_return` 附魔书
+- **实现**:`PlayerInteractEvent.RightClickBlock` 右键 `minecraft:dragon_egg`,背包放入 `eternal_return` 附魔书;
+  仅在**成功放入附魔书**后执行消耗 —— 手上那颗带附魔的下界之星 `shrink(1)`、被右键的龙蛋方块被移除。
+  背包放不下时**不消耗材料**(且产物会掉在玩家脚下, 见"修复记录")
 
 ### 88. 天之锁 — `heaven_chain` ✅
 - **可附魔**:远程武器
@@ -660,7 +687,8 @@
 | **不完整的预知眼**(#33)闪避 | `LivingIncomingDamageEvent` + `isDodging` 兜底 | 护甲前 `LivingHurtEvent` 等价相位 + 1.20.1 的 `dev.shadowsoffire.attributeslib.impl.AttributeEvents.isDodging` 兜底; tick 侧(概率恢复 / 同步 `DODGE_CHANCE` / 低概率反胃)由 `TickSideBatch1` 补齐 |
 | **节奏**(rhythm)×1.5 | 链上写标志 + 乘伤通道读 | 此前**只有读侧、写侧缺失 → 永不生效**; 现于 `onLivingDamage` 内、事件乘伤判定**之前**写标志(与 1.21 同序) |
 | **爆裂黎明** 装填无敌 | `tickExplosiveDawn` 消费"装填中"标志 | 此前**标志写了没人读**; 现补 `TickSideBatch1.tickExplosiveDawn`(装填期抗性提升 V) |
-| **我的海疆** 标记易伤流 | 同相位标记流 | 攻击段写标记(`applyMySeaDomainMark`)+ 受击段读(`incomingConditionalFactor`, 含 1200 tick 过期) |
+| **我的海疆** 标记易伤流 | 同相位标记流 | 攻击段写标记(`applyMySeaDomainMark`)+ 受击段读(`incomingConditionalFactor`, **刷新窗口 400 tick / 20 秒**过期;递增起点只在首次命中写入) |
+| **顶点**(#45) 的增伤 / 闪避 / 移速 | `bonus_damage` +10.0(×11)、`DODGE_CHANCE` +1.00、移速 ×(1+1.0) | 1.20.1 原为 `bonus_damage` +5.0(×6)、闪避仅 +0.20 且**缺移速项**;已按 1.21.1 与 README「伤害 +1000% / 闪避 +100% / 移速 +100%」对齐(数值换成平台 idiom 的 `UnifiedDamageEngine.addPercentBonus`,通道语义不变) |
 | 各类 tick 维护 | `onPlayerTick` 内 | 全部位于 `TickSideBatch1`, 由 `EnchantWiring1201.onPlayerTick` 统一调用 |
 
 ### 8.3 附魔名颜色与诅咒标注(round-close 修复)
@@ -680,16 +708,20 @@
 |---|---|---|
 | 加伤 | `bonus_damage`(默认 0) | 面板显示 `1 + Σ` 各类加伤百分比修饰符 |
 | 乘伤 | `damage_multiplier`(默认 1) | 面板显示乘伤总乘积 |
-| 固定加伤 | `flat_damage`(默认 0) | 面板显示固定加伤量 |
+| 固定加伤 | `flat_damage`(默认 0) | 面板显示固定加伤量(倏忽恩赐 / 目不能追 / 制裁只在**命中瞬间**写入, 平时读回默认 0, 见下方"事件条件型"说明) |
+| 受击倍率 | `incoming_damage`(默认 1) | 面板显示受击侧总乘积(>1 易伤, <1 减伤) |
 
 **为什么之前"看不到"**(根因已定位):
 
 | 项 | 说明 |
 |---|---|
-| 三个通道属性**保持同步** | `setSyncable(true)`(一度误改为 `false` 试图隐藏, 已回退)。面板只列已同步属性, 故必须同步才会出现 |
+| 四个通道属性**保持同步** | `setSyncable(true)`(一度误改为 `false` 试图隐藏, 已回退)。面板只列已同步属性, 故必须同步才会出现 |
 | 加伤修饰符本就常驻 | 各附魔用**独立 modifier id**(`bonus_supreme_art` / `bonus_new_sun` / `bonus_cornered_beast` / `bonus_rapid_ascent` / `bonus_sorrowful_red`)在 PlayerTick 每 tick 覆盖写入 → 属性值持续非默认 |
 | 乘伤聚合本就常驻 | `refreshDamageMultiplierAggregate` 每 tick 写单一聚合 modifier `unified_mult_aggregate` |
 | **受击侧曾两次受击之间归零(已修)** | 1.20.1 平台在 `onLivingDamage` 尾部把 `incoming_tick_aggregate` **重置为 1**, 于是两次受击之间 `incoming_damage` 读回 1 —— 即"数值只在伤害瞬间存在"。现已**只清事件临时聚合** `incoming_event_mult`, tick 常驻聚合保持常驻(与 1.21.1 主工程一致) |
+| **`flat_damage` / `incoming_damage` 曾显示为原始键名(已修)** | 语言文件只登记了 `bonus_damage` / `damage_multiplier` 两个译名, 而面板按 `attribute.<modid>.<属性名>` 取 `getDescriptionId()` —— 找不到就原样打印键名。已补齐 zh_cn/en_us 的 `attribute.zhonz_more_enchantments.flat_damage`(固定加伤 / Flat Damage)与 `...incoming_damage`(受击倍率 / Incoming Damage Multiplier) |
+| **面板只做"全量注册表 + 玩家挂载"筛选, 不看白名单** | Apothic 的 `AttributesGui.refreshData()` 遍历 `BuiltInRegistries.ATTRIBUTE.holders()` → `player.getAttribute(...) != null`, 再按 `ALConfig.hiddenAttributes`(默认黑名单只有 `neoforge:nametag_distance`/`neoforge:creative_flight`/`apothic_attributes:elytra_flight`/`apothic_attributes:ghost_health`)与可选开关 `hideUnchanged` 过滤; 故本模组四个属性只要能同步到客户端就必然出现, **无需** Apothic 侧登记 |
+| `hideUnchanged` 会隐藏默认值 | 面板自带"隐藏未变化"按钮, `hideUnchanged` 默认 **false**(全部显示)。打开后 `baseValue == value` 的行会被隐藏 —— 即 `bonus_damage`=0 / `flat_damage`=0 / `damage_multiplier`=1 / `incoming_damage`=1 的**默认态**行不显示, 附魔加成一挂上就重新可见 |
 
 > 说明: 事件条件型加伤/乘伤(如泰坦打精英 ×2、破军目标低血 +30%)依赖**目标状态**, 只在
 > 命中瞬间以临时 modifier 计入并立即清除, 因此**不会**常驻显示 —— 这是设计使然, 面板反映的是

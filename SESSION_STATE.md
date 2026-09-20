@@ -2,7 +2,110 @@
 
 > 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
 
-## 最新状态(2026-09-13, round-ui:显示问题修复 + v1.3.2 发布 + 仓库编码事故)
+## 最新状态(2026-09-13 晚, round-eternal:「永劫回归」真实缺陷修复 + 遗留验证项收口 + v1.3.3)
+
+### ✅ #59「永劫回归」(`eternal_return`)—— 旧实现是坏的, 现修好并实测
+**旧实现(1.3.2 及以前)**: `TotemUseMixin` 在**服务器运行中**直接递归删除世界目录, 两个真实缺陷:
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| 1 | Windows 上 `session.lock` / `region/*.mca` 被本进程持有句柄 → `File.delete()` **只返回 false、不抛异常**, 旧代码丢了返回值 | **静默失败**: 世界根本没被清掉; 即便删掉一部分, 紧随的 `server.halt()` 保存流程会把内存里的区块写回磁盘, 世界"复活" |
+| 2 | 删掉的是**整个 `world/`**, 而背包/经验在 `world/playerdata/<uuid>.dat` | 与文档"**保留所有玩家的背包、经验等内容**"直接矛盾 —— 玩家数据被一起删了 |
+
+**新实现(三平台同一份 `common/eternal/EternalReturnHelper`)—— 触发与重建分两步**:
+1. **触发**(右键): 只保存玩家数据(`PlayerList.saveAll`)→ 写待重置标记 `zhonz_eternal_return.flag`
+   (游戏根目录, 记录世界绝对路径 + 种子)→ 踢出所有玩家(§d永劫回归……)→ 2 tick 后停服
+2. **重建**(下次启动、世界加载之前 `ServerAboutToStartEvent`): 此刻**没有文件句柄**,
+   删除必定成功, 也不会被保存流程覆盖。删除 `region/ entities/ poi/ data/ DIM1/ DIM-1/`,
+   **保留 `level.dat`(原种子唯一来源)+ `playerdata/ advancements/ stats/ datapacks/ serverconfig/ session.lock`**
+   → 地形按原种子重新生成, 玩家数据完好
+3. 另按文档口径加**主手**守卫(副手图腾不触发)
+
+### ✅ 实测(跨重启, 不是纸面推演)
+- 新增 **`/zhonztest eternaltest`(8 用例全过)**:
+  `enchant_totem` / `wiring_mainhand`(dry-run 走真实 `stack.use()`, 断言 CONSUME + 命中)/
+  `negative_plain_totem` / `negative_offhand` / `reset_keeps_playerdata`(临时目录造完整世界, 逐项核对
+  删除集与保留集**含内容不变**) / `flag_roundtrip`(写标记→启动重建→销标记) /
+  `thirty_million_gives_book` / `thirty_million_requires_egg`(#87 三千万转 = #59 唯一获取途径)
+- 新增 **`/zhonztest eternaltest live`**: 真实触发一次 → 服务端停服 → 重启后核对:
+  | 核对项 | 结果 |
+  |---|---|
+  | 停服前标记 | `flag` 写出, 世界路径 + seed=`5940841580607799542` |
+  | 重启日志 | `[EternalReturn] 检测到待重置标记 → 世界已重置 —— deleted=7[...] kept=7[...]` |
+  | 地形重建 | spawn 区重新生成(12.207s, 平时 2.4s); `region/*.mca` 时间戳刷新并正常写回(78–155 KB) |
+  | **原种子** | `level.dat` 解码: 重置前 `5940841580607799542` → 重置后**完全相同** |
+  | **玩家数据** | 预埋 `playerdata/zhonz_eternal_marker.txt` 在重建后**原样存在** |
+  | 标记 | 重置成功后自动销掉(失败则保留待下次重试) |
+
+### ✅ 其余遗留验证项收口
+- **`incomingtest` 4 → 6 用例**: 补 **#75 唯有命运 · 受击侧免死**(胸甲带该附魔吃 10× 最大生命伤害 →
+  存活且生命 ≥1; 反例: 同款胸甲不带附魔 → 直接死亡)。此前它只在客户端手测过, `testall` 覆盖的
+  只是攻击侧 ×6 真伤。
+- **#87 三千万转**(下界之星右键龙蛋 → 永劫回归书, 星不消耗)已进自动化(见 eternaltest 7/8)。
+- **仍未被自动化覆盖(3 项, 均已如实登记)**: 「铸就全一城盾」**盾挡**分支、
+  「天之锁」远程命中定身(25% 概率)、「庄严哀悼」粒子(**纯客户端, 服务端无法断言**)。
+  前两项机制简单且接线已核对(见 `onCityShieldBlock` / `tryHeavenChain`), 需要造
+  `LivingShieldBlockEvent` / 抛射物伤害源才能自动化; 第三项需真实客户端。
+
+### 🚨 重大发现: 1.20.1 双平台**完全无法启动**(3 个真实缺陷, 已全部修复并实测启动)
+> `UNIMINED_MIGRATION.md` 6.8 里那句"1.20.1 `Done (27.1s)` ✅"是**这两个缺陷引入之前**的记录;
+> 之后 round-close 加了自定义伤害类型 + WeepingFireMixin 重写, 再没人启动过平台服务端
+> (`run/server/logs/latest.log` 停在 09-09)。本次实跑 `gradlew runServer` 直接崩, 逐个修掉:
+
+| # | 缺陷 | 现象 | 修复 |
+|---|---|---|---|
+| A | `WeepingFireMixin` / `PlayerWeepingFireMixin` 把 `AttackerType` 写成**mixin 包内的嵌套 record** | 启动即 `IllegalClassLoadError: ...WeepingFireMixin$AttackerType is in a defined mixin package ... cannot be referenced directly`(注入方法的返回类型被目标类引用 → JVM 必须直接加载它 → Mixin 拒绝) | 提到 mixin 包**之外**: `forge/AttackerType1201` / `neoforge1201/AttackerType1201`(record 加 `()` 访问器) |
+| B | `DamageTypes1201` 用 `DeferredRegister.create(Registries.DAMAGE_TYPE, MODID)` | `IllegalStateException: Unable to find registry with key minecraft:damage_type for mod "zhonz_more_enchantments"` → FATAL 回滚到 VANILLA, 启动失败。**1.20.1 的 damage_type 是数据包注册表, 不在 Forge 的 GameData 里** | 改为**纯数据包驱动**(与 1.21 同构): `DamageTypes1201` 只留 `ResourceKey` 常量, 条目来自 `data/zhonz_more_enchantments/damage_type/*.json`; 删掉 `DAMAGE_TYPES.register(modBus)` |
+| C | 两个平台资源里**没有 `pack.mcmeta`** | Forge 日志 `Missing metadata in pack mod:zhonz_more_enchantments` + `Missing data pack mod:zhonz_more_enchantments`; `datapack list` 里**没有本 mod** → 即使修好 B, 三个自定义伤害类型与 `tags/damage_type/*` 也全都不存在 | 各加 `src/main/resources/pack.mcmeta`(`pack_format: 15`) |
+| D | 4 个附魔用 `EnchantmentCategory.WEARABLE` 注册(`eternal_return` / `manifest` / `prophets_call` / `thirty_million_turns`) | 1.20.1 的原版分类**没有"图腾/下界之星/山羊角"**, WEARABLE 只认盔甲/鞘翅/头颅 → `canEnchant` 恒 false, 铁砧/附魔台/`/enchant` **都装不上去**(实测 `/enchant` 报 "Totem of Undying cannot support that enchantment") → 这几个附魔(含 #59 永劫回归)在 1.20.1 上等于**无法获得** | 新增 `ItemBoundEnchantment`(覆写 `canEnchant(ItemStack)`, 谓词精确表达载体, 对齐 1.21 的 `supported_items`), 四个附魔改用它注册 |
+
+**实测(1.20.1 Forge, 修复后)**:
+- `gradlew runServer` → **Done**, 无 FATAL
+- `datapack list` → **5 个**: vanilla / forge / attributeslib / placebo / **mod:zhonz_more_enchantments** ✅
+- `damage @e 1 zhonz_more_enchantments:true_damage` → `Applied 1.0 damage to Zombie` ✅
+  (`frost` 对牛 → Applied ✅; 对僵尸报 invulnerable 是僵尸自身的冰冻免疫, 说明类型已解析)
+- `enchant <僵尸> zhonz_more_enchantments:weeping_child 1` → 成功 ✅(代码注册附魔可用)
+- `debug.log` → `Mixing TotemUseMixin ... into net.minecraft.world.item.Item` ✅
+- **NeoForge 1.20.1 同样起得来**(`Done`, `datapack list` 含本 mod); 载体限定实测:
+  | 操作 | 结果 |
+  |---|---|
+  | 图腾 + `eternal_return` | `Applied enchantment ... eternal_return` ✅ |
+  | 图腾 + `manifest` | ✅ |
+  | 下界之星 + `thirty_million_turns` | ✅ |
+  | 钻石剑 + `eternal_return` | `cannot support that enchantment` ✅(反例, 载体限定生效) |
+
+**教训**: 平台"compile ✅"完全不能替代"起得来"。凡改动 mixin(尤其嵌套类型)或注册表通路,
+必须真的 `runServer` 一次; `run/server/logs/latest.log` 的日期就是"上次真的起过"的时间戳。
+
+### 验证
+| 项目 | 结果 |
+|---|---|
+| 三平台 compile | ✅ |
+| 主工程 runServer | testall **65/65**、incomingtest **6/6**、settest **4/4**、manifesttest **5/5**、eternaltest **8/8** |
+| 永劫回归端到端 | `eternaltest live` 真实触发 → 停服 → 重启重建(种子/背包均保留, 见上表) |
+| 1.20.1 Forge 启动 | `Done` ✅ + 数据包已启用 + 自定义伤害类型可用 + `/enchant` 载体限定正确 |
+| 1.20.1 NeoForge 启动 | `Done` ✅ + 同上四项载体限定实测通过 |
+
+### 版本号 1.3.2 → **1.3.3**(`gradle.properties` + 两个平台 `build.gradle`)
+> 本轮含**真实行为修复**(永劫回归 + 1.20.1 平台启动崩溃), 若要让用户拿到,
+> 必须递增版本号重新发布,**不要覆盖 v1.3.2 的资产**。
+> 本地产物(三平台均已构建):
+> | 平台 | jar | 大小 |
+> |---|---|---|
+> | NeoForge 1.21.1(主工程) | `build/libs/zhonz_more_enchantments-1.3.3.jar` | 217,118 B |
+> | Forge 1.20.1 | `platforms/1.20.1-forge/build/libs/zhonz-more-enchantments-1.20.1-forge-1.3.3.jar` | 195,660 B |
+> | NeoForge 1.20.1 | `platforms/1.20.1-neoforge/build/libs/zhonz-more-enchantments-1.20.1-neoforge-1.3.3.jar` | 197,867 B |
+> ⚠️ 本轮**未发布**(用户未要求); 真要发布时记得: 走 `tools/release-v*.ps1` 流程,
+> push 后必须跑一次 `tools/check-remote-encoding.ps1` 编码门禁(防 UTF-16 事故复发)。
+
+### 新增本地工具(会话日志考古, 都在 `tools/`)
+- `dsh_read_session.js` —— 解压多帧 `session.jsonl.zstd`(Node 的 `zstdDecompressSync` 只解第一帧,
+  必须按 magic 切帧并逐帧校验)
+- `dump_user_turns.js` / `dump_assistant_turns.js` / `search_session.js` —— 抽取用户轮次、各轮最终回复、关键词检索
+
+---
+
+## 上一状态(2026-09-13, round-ui:显示问题修复 + v1.3.2 发布 + 仓库编码事故)
 
 ### ⚠️ 事故: GitHub 仓库曾被整体存成 UTF-16(已修复 + 已加门禁)
 - **现象**: `main` 整条分支 25 个文本文件全部是 **UTF-16LE**(`FF FE` BOM + 大量 NUL 字节),

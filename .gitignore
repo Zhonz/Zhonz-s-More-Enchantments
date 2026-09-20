@@ -7,6 +7,8 @@ build/
 # Local backup (pre-UniMined snapshot, not committed)
 _backup_pre_unimined/
 _unimined_probe/
+# 永劫回归重置前的工作区世界快照(本地保险, 不入库)
+_backup_world_pre_eternal/
 *.hprof
 
 # IDE
@@ -38,10 +40,15 @@ _enchant_map.txt
 .sessionlogs/
 dsh-session-*.zip
 graphflow-out/
+.graphflow/
+.graphflow-cache/
 build/moddev/_probe/
 tools/github_proxy.js
 tools/dump_session.js
 tools/dump_user_turns.js
+tools/dump_assistant_turns.js
+tools/dsh_read_session.js
+tools/search_session.js
 tools/release-v*.ps1
 tools/release-notes-v*.md
 tools/publish-via-api.ps1

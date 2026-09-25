@@ -2,6 +2,21 @@
 
 > 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
 
+## 发布(2026-09-25 晚, v1.3.5 已上线 —— 死讯键修复 + Epic Fight 充能兼容)
+- **Release**: https://github.com/Zhonz/Zhonz-s-More-Enchantments/releases/tag/v1.3.5(id `396351127`);tag 指向 `271233b`(= 发布提交),main 已推到 `271233b`。
+
+| 平台 | 资产 | 大小 | sha256(前 16 位) |
+|---|---|---|---|
+| NeoForge 1.21.1 | `zhonz_more_enchantments-1.3.5.jar` | 332441 B | `40A7D12CEAC1E517` |
+| Forge 1.20.1 | `zhonz-more-enchantments-1.20.1-forge-1.3.5.jar` | 165896 B | `ABC0C74E87A9420E` |
+| NeoForge 1.20.1 | `zhonz-more-enchantments-1.20.1-neoforge-1.3.5.jar` | 166809 B | `33E04911611242C0` |
+
+- 本轮收录的提交: `c794685`(三版本补 `death.attack.<type>.item` 死讯键)+ `4c437b2`(新增 `tools/check-platform-parity.mjs` 三版本资源门禁)+ `c090253`(伤害类型转换改「原地改写」伤害源, 修 Epic Fight 武器招式充能不增长)+ `271233b`(版本号 1.3.4 → 1.3.5)。
+- **发布姿势(本轮实测)**: `powershell -ExecutionPolicy Bypass -File tools/release-v1.3.5.ps1` —— 六步(凭据管理器取 token → 校验三 jar → 走 `tools/github_proxy.js` 代理推 main → 编码门禁 → 建 Release → 传三资产)。本轮推送**首次尝试**(IP `140.82.112.3`, 端口 8899, `http.sslBackend=openssl` + `http.version=HTTP/1.1`)即成功;编码门禁检查 313 个文本文件 PASS;脚本内 git 输出已加 token 脱敏(`-replace [regex]::Escape($tok), '***'`)。只想推代码不建 Release 时加 `-SkipApi`。
+- 验证: `zhonztest all` = 121 例 / 118 通过 / 0 失败 / 3 跳过;三平台 build 全部 BUILD SUCCESSFUL;
+  `node tools/check-platform-parity.mjs` = RESULT=PASS;1.20.1 两平台产物的 refmap 已把
+  `DamageSourceTypeAccessor` 三字段映射到 SRG(`f_268495_` / `f_268595_` / `f_268569_`)。
+
 ## 最新状态(2026-09-25, round-death-message:「火焰伤害没有伤害来源」= 缺 `.item` 死讯键)
 
 ### ✅ 根因(1.21.1 javap 实测 `DamageSource.getLocalizedDeathMessage`)

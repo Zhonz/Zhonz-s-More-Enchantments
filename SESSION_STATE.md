@@ -13,10 +13,10 @@
 | `.player` | 无来源实体、但有击杀记录(`getKillCredit()`) | `death.attack.<msgId>.player` | `[受害者, 攻击者]` |
 
 - 用户症状「定义的火焰伤害还是不能正常有伤害来源」= **改过名的武器**击杀时走 `.item`, 而三版本 lang 只有基础键与 `.player`(上一轮只补了基础键的 `%2$s`)⇒ 客户端只能显示未翻译的原始键。
-- 修复: 6 个 lang(3 版本 × 中英)各补 3 个 `.item` 键(+18 行); `ENCHANTMENTS.md:283` 记录三变体; **`WeepingFireHelper.java:64` 的 `new DamageSource(holder, at.attacker, at.attacker)` 本身正确, 勿改**。
+- 修复: 6 个 lang(3 版本 × 中英)各补 3 个 `.item` 键(+18 行); `ENCHANTMENTS.md:283` 记录三变体; 当时判定 `WeepingFireHelper` 里的 `new DamageSource(holder, at.attacker, at.attacker)` 本身正确 —— **该判定已被 2026-09-25 的「原地改写」方案取代**(见下节「修复: 伤害类型转换改为"原地改写"伤害源」): 新建对象会让其它 mod 的 `source instanceof 其子类` 判定失效。
 - 1.20.1 侧依据: 原版 client jar 的 `assets/minecraft/lang/en_us.json` 含 `death.attack.{mob,player,arrow}.item`(1.20.1 用 `hasCustomHoverName()` 判定), 平台同样需要 `.item` 键。
 - 验证: `DamageTypeSuites` 新增 `death_message_item_variant_is_localized`(改名武器击杀 → 键必须是 `.item` + 参数含攻击者名与物品名 + 中英模板含 `%2$s`/`%3$s`); **把运行时 lang 的 `.item` 键删掉重跑实测 FAIL、还原 PASS(判别力已证)**; `/zhonztest all` = 119 例/116 通过/0 失败/3 跳过; 主工程 + 两平台 `gradle build` 均 SUCCESSFUL, 三个 jar 内均含 3 个 `.item` 键。提交 `c794685`。
-- ⚠️ **版本号仍是 `mod_version=1.3.4`**: 本地重建的 1.3.4 jar 与**已发布**的 v1.3.4(sha256 `2d320b7b…`)内容已不同 ⇒ 要发布必须先升到 1.3.5。
+- ✅ **版本号已升至 `mod_version=1.3.5`**(2026-09-25): 本地重建的 1.3.4 jar 与**已发布**的 v1.3.4(sha256 `2d320b7b…`)内容已不同, 故本轮以 **v1.3.5** 发布, 同时收录死讯键修复(`c794685`)与 Epic Fight 武器充能兼容修复(`c090253`)。
 
 ### 🛠 新增 `tools/check-platform-parity.mjs`(三版本资源门禁)
 - 以主工程 `src/main/resources` 为基准, **语义级**(忽略行尾/BOM)比对两平台白名单资源: `assets/<modid>/lang/*.json`(全键 + 文案)、`data/<modid>/damage_type/*.json`、`data/minecraft/tags/damage_type/*.json`; 漂移时退出码 1, 列出缺失/多余/不一致的键。
@@ -402,4 +402,4 @@ en_us 侧移除 #75 的同类问题, 并给 en_us 的 #2 补上紫色斜体(原�
   (`type=f_268495_`、`directEntity=f_268595_`、`causingEntity=f_268569_`), 与先例 `ThrownTridentAccessor`
   (`tridentItem=f_37555_`) 同机制 ⇒ 生产环境可用。平台工程只共享 `common/`, 不编译 `command/test`,
   故 1.20.1 侧的**行为**验证仍需真实客户端(用户的 EF 实例)。
-- 版本号未升(仍 1.3.4), 未推送远端。
+- 版本号已升至 `1.3.5` 并随本轮发布推送远端(v1.3.5: 死讯键修复 + Epic Fight 充能兼容修复); 1.20.1 侧行为验证仍待用户的 EF 实例反馈。

@@ -90,6 +90,7 @@
     "enchantment.zhonz_more_enchantments.weeping_child.desc": "Immune to fire while held; attacks (incl. bows/crossbows/tridents) deal weeping fire (true fire damage that ignores fire immunity and Fire Resistance); ignites both you and the target; +200% damage while burning",
     "death.attack.weeping_fire": "%1$s was burned by %2$s's weeping fire",
     "death.attack.weeping_fire.player": "%1$s was consumed by weeping fire while fighting %2$s",
+    "death.attack.weeping_fire.item": "%1$s was burned to death by %2$s with %3$s",
     "enchantment.zhonz_more_enchantments.apex": "The Apex",
     "enchantment.zhonz_more_enchantments.apex.desc": "+100% dodge, +1000% damage, +100% movement speed while held in main or off hand",
     "enchantment.zhonz_more_enchantments.cornered_beast": "Cornered Beast",
@@ -188,8 +189,10 @@
 
     "death.attack.frost": "%1$s was frozen solid by %2$s",
     "death.attack.frost.player": "%1$s was frozen solid while fighting %2$s",
+    "death.attack.frost.item": "%1$s was frozen solid by %2$s with %3$s",
     "death.attack.true_damage": "%1$s was erased by %2$s's true damage",
     "death.attack.true_damage.player": "%1$s was erased by true damage while fighting %2$s",
+    "death.attack.true_damage.item": "%1$s was erased by %2$s with %3$s",
 
     "enchantment.zhonz_more_enchantments.prophets_call.warning": "§c⚠ Detected %s hostile entities!",
 

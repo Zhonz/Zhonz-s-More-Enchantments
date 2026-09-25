@@ -90,6 +90,7 @@
     "enchantment.zhonz_more_enchantments.weeping_child.desc": "主手持有时免疫火焰伤害；攻击（含弓弩/三叉戟）造成哭泣之火（真火焰伤害，无视火免与抗火），点燃双方，自身燃烧时伤害+200%",
     "death.attack.weeping_fire": "%1$s被%2$s的哭泣之火烧死了",
     "death.attack.weeping_fire.player": "%1$s在与%2$s战斗时被哭泣之火吞噬了",
+    "death.attack.weeping_fire.item": "%1$s被%2$s用%3$s烧死了",
 
     "enchantment.zhonz_more_enchantments.apex": "\"顶点\"§r",
     "enchantment.zhonz_more_enchantments.apex.desc": "主手或副手持有时闪避率+100%，伤害+1000%，移动速度+100%",
@@ -190,8 +191,10 @@
 
     "death.attack.frost": "%1$s被%2$s的冰霜冻僵了",
     "death.attack.frost.player": "%1$s在与%2$s战斗时冻僵了",
+    "death.attack.frost.item": "%1$s被%2$s用%3$s冻僵了",
     "death.attack.true_damage": "%1$s被%2$s的真实伤害抹除了",
     "death.attack.true_damage.player": "%1$s在与%2$s战斗时被真实伤害抹除了",
+    "death.attack.true_damage.item": "%1$s被%2$s用%3$s抹除了",
 
     "enchantment.zhonz_more_enchantments.prophets_call.warning": "§c⚠ 检测到 %s 个敌对生物！",
 

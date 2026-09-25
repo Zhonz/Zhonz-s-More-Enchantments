@@ -197,6 +197,57 @@ public final class DamageTypeSuites {
                     }
                 });
 
+        suite.addWorld("death_message_item_variant_is_localized",
+                "改过名的武器击杀时必须能正常显示死亡消息。原版 DamageSource.getLocalizedDeathMessage 在"
+                        + "\"攻击者是活体、且其主手物品带 CUSTOM_NAME(=改过名/铁砧重命名)\"时会改用 <基础键>.item,"
+                        + "并传三个参数 [受害者, 攻击者, 物品名](参见原版 death.attack.mob.item)。"
+                        + "只要 zh_cn/en_us 里缺这个 .item 键, 客户端就只能显示未翻译的键名 —— 玩家看到的就是\"没有伤害来源\"。",
+                "键 = death.attack.<msgId>.item; 参数含攻击者名与物品名; zh_cn/en_us 的 .item 文案必须同时含 %2$s 与 %3$s",
+                c -> {
+                    Registry<DamageType> registry = registry(level);
+                    try (TestWorld world = new TestWorld(level, anchor(level))) {
+                        Zombie attacker = world.zombie();
+                        Cow victim = world.cow(20.0D);
+                        attacker.setCustomName(net.minecraft.network.chat.Component.literal("测试攻击者"));
+                        ItemStack named = new ItemStack(Items.DIAMOND_SWORD);
+                        named.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME,
+                                net.minecraft.network.chat.Component.literal("测试之剑"));
+                        attacker.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, named);
+                        for (String id : List.of(WEEPING_FIRE, FROST, TRUE_DAMAGE)) {
+                            Holder.Reference<DamageType> holder = registry.getHolder(key(id)).orElse(null);
+                            if (holder == null) {
+                                continue;
+                            }
+                            DamageSource converted = new DamageSource(holder, attacker, attacker);
+                            net.minecraft.network.chat.Component message =
+                                    converted.getLocalizedDeathMessage(victim);
+                            String itemKey = "death.attack." + holder.value().msgId() + ".item";
+
+                            c.that(message.getContents()
+                                            instanceof net.minecraft.network.chat.contents.TranslatableContents tc
+                                            && itemKey.equals(tc.getKey()),
+                                    id + " 主手物品改过名时必须用 .item 消息键",
+                                    "期望 " + itemKey + ", 实际 " + message.getContents());
+
+                            if (message.getContents()
+                                    instanceof net.minecraft.network.chat.contents.TranslatableContents tc) {
+                                String args = java.util.Arrays.toString(tc.getArgs());
+                                c.that(args.contains("测试攻击者"), id + " .item 死亡消息参数必须含攻击者名",
+                                        "参数: " + args);
+                                c.that(args.contains("测试之剑"), id + " .item 死亡消息参数必须含物品名",
+                                        "参数: " + args);
+                            }
+
+                            for (String lang : List.of("zh_cn", "en_us")) {
+                                String template = langValue("lang/" + lang + ".json", itemKey);
+                                c.that(template != null && template.contains("%2$s") && template.contains("%3$s"),
+                                        lang + " 的 " + itemKey + " 必须同时含 %2$s 与 %3$s(否则显示原始键/丢来源)",
+                                        "实测文案: " + template);
+                            }
+                        }
+                    }
+                });
+
         // ==================================================================
         // 第三层: 实打 —— 用"只有该类型才有的副作用"反证
         // ==================================================================

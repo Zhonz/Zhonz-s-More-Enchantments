@@ -280,7 +280,7 @@
 - **实现**:
   - `WeepingFireHelper.tryConvert` + `WeepingFireMixin`(LivingEntity)/`PlayerWeepingFireMixin`(Player,避免二次难度缩放):若伤害来自主手持哭泣之子者(近战)或其投射物(弓/弩/三叉戟),用 `weeping_fire` 源重走完整伤害管线(护甲/事件结算一次;`source.is(WEEPING_FIRE)` 防递归)
   - 点燃双方、燃烧增伤、孤独的正午/燃烧的黄昏联动保持
-  - 死亡消息键 `death.attack.weeping_fire[.player]`(中英)
+  - 死亡消息键三变体齐备(中英,三版本同步):`death.attack.weeping_fire`(带攻击者,参数 `[受害者,攻击者]`)、`death.attack.weeping_fire.player`(无实体但有击杀记录)、`death.attack.weeping_fire.item`(攻击者主手物品改过名时,参数 `[受害者,攻击者,物品名]`)。缺任一变体都会让对应场景显示原始键/丢来源 —— `.item` 就是"火焰伤害没有伤害来源"的漏配项;`frost`/`true_damage` 同构
 
 ---
 

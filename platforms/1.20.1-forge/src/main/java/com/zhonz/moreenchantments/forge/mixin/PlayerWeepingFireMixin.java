@@ -57,9 +57,32 @@ public abstract class PlayerWeepingFireMixin {
 
         Holder<DamageType> holder = self.level().registryAccess()
                 .registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(at.type());
-        DamageSource converted = new DamageSource(holder, at.attacker(), at.attacker());
+        DamageSource converted = zhonz$retype(source, holder, at.attacker());
         float newAmount = at.multiplier() == 1.0F ? amount : amount * at.multiplier();
         cir.setReturnValue(self.hurt(converted, newAmount));
+    }
+
+    /**
+     * 伤害类型**原地改写**(不是新建 DamageSource): 其它 mod 的伤害链路靠
+     * "source instanceof 其 DamageSource 子类" + 子类私有状态工作 —— 典型如 Epic Fight:
+     * 武器技能充能(WEAPON_CHARGE)挂在"仅当 event.getSource() instanceof EpicFightDamageSource
+     * 才触发的 DEAL_DAMAGE_EVENT_DAMAGE"上(EF ServerPlayerPatch.java:56-69)。
+     * 新建普通伤害源顶替会让子类身份与私有状态一起丢失 → "附魔后武器技能不再充能"。
+     * 改写失败(理论上仅当 mixin 未生效)时退回新建普通伤害源, 保证附魔语义不丢。
+     */
+    @Unique
+    private static DamageSource zhonz$retype(DamageSource source, Holder<DamageType> holder, LivingEntity attacker) {
+        try {
+            DamageSourceTypeAccessor accessor = (DamageSourceTypeAccessor) (Object) source;
+            accessor.zhonz$setDamageType(holder);
+            // 后两个字段与旧实现 new DamageSource(holder, attacker, attacker) 的第 2/3 参数严格对齐,
+            // 保证"谁打的"口径(含死亡消息参数)与修复前完全一致; 只有对象身份/子类私有状态/来源位置被保留。
+            accessor.zhonz$setDirectEntity(attacker);
+            accessor.zhonz$setCausingEntity(attacker);
+            return source;
+        } catch (Throwable t) {
+            return new DamageSource(holder, attacker, attacker);
+        }
     }
 
     @Unique

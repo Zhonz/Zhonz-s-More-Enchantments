@@ -374,3 +374,32 @@ en_us 侧移除 #75 的同类问题, 并给 en_us 的 #2 补上紫色斜体(原�
 ## 版本差异要点(迁移到 1.20.1 Forge 时注意)
 - 1.20.1 Forge:无 LivingIncomingDamageEvent/DamageContainer(1.21 NeoForge 伤害管线大改),附魔为代码注册非 1.21 数据驱动;1.21.1 依赖 Mojang mapped 方法签名,mixin 目标随版本不同
 - Apothic Attributes 1.20.1 Forge 存在(独立版本),但 API/事件内部不同,需逐项核对
+
+## 修复: 伤害类型转换改为"原地改写"伤害源(2026-09-25, Epic Fight 兼容)
+- 现象(用户报告): 装**史诗战斗(Epic Fight)**后, 附魔**哭泣之子**再用武器攻击, **武器招式充能(WEAPON_CHARGE)进度不再增长**。
+- 根因(EF 1.20.1 20.14.7 源码): EF 把充能挂在 `DEAL_DAMAGE_EVENT_DAMAGE` 上, 而该事件只在
+  `events/EntityEvents.java:291-296` 判定 `event.getSource() instanceof EpicFightDamageSource` 为真时触发,
+  累加点在 `capabilities/entitypatch/player/ServerPlayerPatch.java:56-69`(`isBasicAttack()` 分支)。
+  本 mod 旧实现 `WeepingFireHelper.tryConvert` 与 1.20.1 两平台的 `WeepingFireMixin`/`PlayerWeepingFireMixin`
+  用 `new DamageSource(holder, attacker, attacker)` 顶替原伤害源 → instanceof 变假 → 事件不触发 →
+  充能不动; EF 的硬直/击退/伤害修正器链同样失效。
+- 修法: 三平台新增 `DamageSourceTypeAccessor`(`@Mixin(DamageSource.class)`, 三个
+  `@Mutable @Accessor` 设值器 `zhonz$setDamageType`/`zhonz$setDirectEntity`/`zhonz$setCausingEntity`),
+  转换时**原地改写传入的那个 DamageSource** 再用同一对象重放 `hurt`。
+  三字段取值与旧 `new DamageSource(holder, attacker, attacker)` 逐个一致 ⇒ 本 mod 的伤害数值、点燃、
+  死亡消息参数与 `.item` 变体判定**口径完全不变**(用户要求"其他功能效果不变"); 新保留的只有对象身份、
+  子类身份与私有状态(EF 的 basicAttack/animation/修正器)、`damageSourcePosition`。`@Accessor` 抛异常时
+  回退旧的新建写法。注意: 工具类反向引用 mixin 包里的 `@Accessor` 接口是允许的(禁止的是"普通类放进 mixin 包")。
+- 改动面: `src/main/java/com/zhonz/moreenchantments/util/WeepingFireHelper.java`(新增 `retypeInPlace`)、
+  `neoforge/mixin/DamageSourceTypeAccessor.java`(新增)、1.20.1 两平台各 `mixin/DamageSourceTypeAccessor.java`(新增)
+  + 4 个 `WeepingFireMixin`/`PlayerWeepingFireMixin`(新增 `@Unique zhonz$retype`)、三份 `zhonz_more_enchantments.mixins.json` 各加一行。
+- 验证: 主工程 compile ✅; dev server `/zhonztest all` **cases=121 pass=118 fail=0 error=0 skip=3**
+  (3 条 skip 均为既有: 雨天依赖 / 1.21.1 不在伤害调用里执行 `DamageType.effects`)。
+  新增 2 条回归用例: `damage-type/conversion_retypes_the_source_in_place`(传入对象自身被改写、目标记录的
+  来源就是同一对象、子类私有状态保留)、`damage-type/projectile_conversion_still_works`(箭矢路径照旧转换,
+  且直接实体/造成者口径与修复前一致)。
+- 1.20.1 两平台: build ✅(forge 12m40s / neoforge 11m49s); 产物 refmap 里三字段已映射到 SRG
+  (`type=f_268495_`、`directEntity=f_268595_`、`causingEntity=f_268569_`), 与先例 `ThrownTridentAccessor`
+  (`tridentItem=f_37555_`) 同机制 ⇒ 生产环境可用。平台工程只共享 `common/`, 不编译 `command/test`,
+  故 1.20.1 侧的**行为**验证仍需真实客户端(用户的 EF 实例)。
+- 版本号未升(仍 1.3.4), 未推送远端。

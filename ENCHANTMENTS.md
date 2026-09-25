@@ -280,6 +280,7 @@
 - **实现**:
   - `WeepingFireHelper.tryConvert` + `WeepingFireMixin`(LivingEntity)/`PlayerWeepingFireMixin`(Player,避免二次难度缩放):若伤害来自主手持哭泣之子者(近战)或其投射物(弓/弩/三叉戟),用 `weeping_fire` 源重走完整伤害管线(护甲/事件结算一次;`source.is(WEEPING_FIRE)` 防递归)
   - 点燃双方、燃烧增伤、孤独的正午/燃烧的黄昏联动保持
+  - **转换必须"原地改写"伤害源**(2026-09-25 修复):把 `weeping_fire` 类型写进**传入的那个 `DamageSource`**(三平台各有一个 `DamageSourceTypeAccessor`:`@Mutable @Accessor` 改 `type`/`directEntity`/`causingEntity`),而不是 `new DamageSource(...)` 顶替 —— 新建对象会让别的模组的 `source instanceof 其子类` 判定失效。典型:Epic Fight 的武器技能充能只在 `event.getSource() instanceof EpicFightDamageSource` 时累加(EF 1.20.1 `ServerPlayerPatch.java:56-69`),旧实现下表现为"装了哭泣之子后武器招式进度条不动"。三个字段的取值与旧做法逐个一致(直接实体与造成者都归到攻击者)⇒ 本附魔的伤害数值、点燃、死亡消息口径完全不变;新保留下来的只有子类身份、子类私有状态与 `damageSourcePosition`。若 `@Accessor` 未生效(理论上仅 mixin 失效时)自动回退为旧的新建写法,附魔语义不丢
   - 死亡消息键三变体齐备(中英,三版本同步):`death.attack.weeping_fire`(带攻击者,参数 `[受害者,攻击者]`)、`death.attack.weeping_fire.player`(无实体但有击杀记录)、`death.attack.weeping_fire.item`(攻击者主手物品改过名时,参数 `[受害者,攻击者,物品名]`)。缺任一变体都会让对应场景显示原始键/丢来源 —— `.item` 就是"火焰伤害没有伤害来源"的漏配项;`frost`/`true_damage` 同构
 
 ---

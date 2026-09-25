@@ -426,6 +426,103 @@ public final class DamageTypeSuites {
                     }
                 });
 
+        // ------------------------------------------------------------------
+        // Epic Fight 兼容回归(2026-09-25)
+        // EF 的伤害链路用 `event.getSource() instanceof EpicFightDamageSource` 判定"这是 EF 的一击",
+        // 武器技能充能(WEAPON_CHARGE)就挂在该判定之后的 DEAL_DAMAGE_EVENT_DAMAGE 上
+        // (EF 1.20.1 ServerPlayerPatch.java:56-69)。旧实现在转换时 `new DamageSource(...)` 顶替,
+        // instanceof 变假 → 事件不触发 → "装了哭泣之子后武器技能进度条不动"。
+        // 修法: 原地改写传入 DamageSource 的 type 字段, 对象身份与子类私有状态全部保留。
+        // ------------------------------------------------------------------
+        suite.addWorld("conversion_retypes_the_source_in_place",
+                "Epic Fight 兼容回归: 转换必须\"原地改写传入的那个 DamageSource\"而不是新建对象顶替 —— "
+                        + "否则 EpicFightDamageSource 的子类身份与私有状态(武器技能充能等)会随对象一起丢失",
+                "实打后: 传入对象自身已变成 weeping_fire、目标记录的伤害来源就是同一个对象(且仍是我们构造的子类)、目标确实掉血",
+                c -> {
+                    try (TestWorld world = new TestWorld(level, anchor(level))) {
+                        Zombie attacker = world.zombie();
+                        Cow victim = world.cow(20.0D);
+                        TestWorld.mainHand(attacker, enchanted(ModEnchantments.WEEPING_CHILD, 1));
+
+                        Holder<DamageType> mobAttack = registry(level)
+                                .getHolderOrThrow(net.minecraft.world.damagesource.DamageTypes.MOB_ATTACK);
+
+                        // 带私有状态的 DamageSource 子类(EpicFightDamageSource 的替身):
+                        // 转换后必须仍是同一个实例, 且子类字段还在。
+                        final class ProbeSource extends DamageSource {
+                            final String marker = "probe-state";
+
+                            ProbeSource(Holder<DamageType> type, net.minecraft.world.entity.Entity direct,
+                                        net.minecraft.world.entity.Entity causing) {
+                                super(type, direct, causing);
+                            }
+                        }
+                        ProbeSource probe = new ProbeSource(mobAttack, attacker, attacker);
+
+                        float before = victim.getHealth();
+                        victim.hurt(probe, 2.0F);
+                        DamageSource recorded = victim.getLastDamageSource();
+
+                        c.note("传入对象命中后的类型=" + probe.type().msgId()
+                                + " 目标生命 " + TestKit.fmt(before) + "→" + TestKit.fmt(victim.getHealth()));
+                        c.note("目标记录的伤害来源类型="
+                                + (recorded == null ? "null" : recorded.type().msgId())
+                                + " 类=" + (recorded == null ? "null" : recorded.getClass().getSimpleName()));
+                        c.that(probe.is(key(WEEPING_FIRE)),
+                                "传入的 DamageSource 必须被原地改成 weeping_fire(旧实现里它会保持原样)",
+                                "实测类型: " + probe.type().msgId());
+                        c.that(recorded == probe,
+                                "目标记录的伤害来源必须就是传入的那个对象(EF 的充能监听器拿到的也是它)",
+                                "recorded=" + (recorded == null ? "null" : recorded.type().msgId())
+                                        + " 同一对象=" + (recorded == probe));
+                        c.that(recorded instanceof ProbeSource,
+                                "子类身份必须保留(EF 的 EpicFightDamageSource 同理)",
+                                "recorded 类=" + (recorded == null ? "null" : recorded.getClass().getSimpleName()));
+                        if (recorded instanceof ProbeSource ps) {
+                            c.eq("子类私有状态必须随对象保留", ps.marker, "probe-state");
+                        }
+                        c.that(victim.getHealth() < before, "转换后的伤害必须真的打进去",
+                                "生命 " + TestKit.fmt(victim.getHealth()) + " 应 < " + TestKit.fmt(before));
+                    }
+                });
+
+        // ------------------------------------------------------------------
+        // 修法的"不回归"面: 投射物路径与"谁打的"口径必须与修复前逐字一致
+        // (用户要求: 确保其他功能实现的效果不变。原地改写只换 type/directEntity/causingEntity
+        //  三个字段, 取值与旧实现 new DamageSource(holder, attacker, attacker) 完全相同。)
+        // ------------------------------------------------------------------
+        suite.addWorld("projectile_conversion_still_works",
+                "回归: 射手的箭命中仍必须转成 weeping_fire(投射物分支不许被原地改写改坏), "
+                        + "且转换后的归属口径与修复前一致(直接实体/造成者都是射手)",
+                "哭泣之子持有者射出的箭命中 → 目标被点燃; 转换后 source.getDirectEntity()==getEntity()==射手",
+                c -> {
+                    try (TestWorld world = new TestWorld(level, anchor(level))) {
+                        Zombie shooter = world.zombie();
+                        Cow victim = world.cow(20.0D);
+                        TestWorld.mainHand(shooter, enchanted(ModEnchantments.WEEPING_CHILD, 1));
+
+                        net.minecraft.world.entity.projectile.Arrow arrow =
+                                world.spawn(net.minecraft.world.entity.EntityType.ARROW);
+                        arrow.setOwner(shooter);
+
+                        TestWorld.extinguish(victim);
+                        DamageSource arrowSource = level.damageSources().arrow(arrow, shooter);
+                        float before = victim.getHealth();
+                        victim.hurt(arrowSource, 2.0F);
+
+                        c.note("箭命中后: 类型=" + arrowSource.type().msgId()
+                                + " 燃烧 tick=" + victim.getRemainingFireTicks()
+                                + " 生命 " + TestKit.fmt(before) + "→" + TestKit.fmt(victim.getHealth()));
+                        c.that(arrowSource.is(key(WEEPING_FIRE)), "箭矢必须照旧被转成 weeping_fire",
+                                "实测类型: " + arrowSource.type().msgId());
+                        c.that(victim.getRemainingFireTicks() > 0, "哭泣之火必须真的点燃目标",
+                                "燃烧 tick=" + victim.getRemainingFireTicks());
+                        c.that(arrowSource.getDirectEntity() == shooter && arrowSource.getEntity() == shooter,
+                                "归属口径必须与修复前一致(直接实体与造成者都归到射手)",
+                                "direct=" + arrowSource.getDirectEntity() + " causing=" + arrowSource.getEntity());
+                    }
+                });
+
         return List.of(suite);
     }
 

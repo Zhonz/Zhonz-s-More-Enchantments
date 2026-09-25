@@ -18,6 +18,7 @@
         "ManifestTotemMixin",
         "HaloSleepMixin",
         "WeepingFireMixin",
+        "DamageSourceTypeAccessor",
         "PlayerWeepingFireMixin",
         "FireImmunePierceMixin",
         "FireResistancePierceMixin",

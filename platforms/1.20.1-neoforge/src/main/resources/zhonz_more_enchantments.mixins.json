@@ -18,6 +18,7 @@
                    "HaloSleepMixin",
                    "WeepingFireMixin",
                    "ThrownTridentAccessor",
+                   "DamageSourceTypeAccessor",
                    "PlayerWeepingFireMixin",
                    "FireImmunePierceMixin",
                    "FireResistancePierceMixin",

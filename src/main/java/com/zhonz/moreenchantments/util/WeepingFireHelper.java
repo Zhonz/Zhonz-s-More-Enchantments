@@ -1,6 +1,7 @@
 package com.zhonz.moreenchantments.util;
 
 import com.zhonz.moreenchantments.enchantment.ModEnchantments;
+import com.zhonz.moreenchantments.neoforge.mixin.DamageSourceTypeAccessor;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
@@ -27,6 +28,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * 避免二次缩放(见 PlayerWeepingFireMixin)。
  *
  * 注意: 本类是普通工具类, 绝不能放进 mixin 包(否则被 mixin 类加载规则禁止从外部引用)。
+ * 反向依赖(引用 mixin 包里的 {@code @Accessor} 接口)是允许的 —— 见 {@link DamageSourceTypeAccessor}。
  */
 public final class WeepingFireHelper {
 
@@ -61,11 +63,44 @@ public final class WeepingFireHelper {
 
         Registry<DamageType> reg = self.level().registryAccess().registryOrThrow(Registries.DAMAGE_TYPE);
         Holder.Reference<DamageType> holder = reg.getHolderOrThrow(at.typeKey);
-        DamageSource newSource = new DamageSource(holder, at.attacker, at.attacker);
+        DamageSource converted = retypeInPlace(source, holder, at.attacker);
         float newAmount = at.multiplier == 1.0f ? amount : amount * at.multiplier;
-        boolean result = self.hurt(newSource, newAmount);
+        boolean result = self.hurt(converted, newAmount);
         cir.setReturnValue(result);
         return true;
+    }
+
+    /**
+     * 把自定义伤害类型**原地**写进已有 DamageSource, 然后用同一个对象重放 hurt。
+     *
+     * <p>为什么不能再用 {@code new DamageSource(holder, attacker, attacker)} 顶替:
+     * 其它 mod 的伤害链路靠 {@code source instanceof 其 DamageSource 子类} + 子类私有状态
+     * 工作。典型如 Epic Fight 1.20.1 —— {@code EntityEvents.damageEvent} 只在
+     * {@code event.getSource() instanceof EpicFightDamageSource} 时触发
+     * {@code DEAL_DAMAGE_EVENT_DAMAGE}, 而武器技能充能(WEAPON_CHARGE)挂在
+     * {@code ServerPlayerPatch.java:56-69} 的这个事件上。新建普通 DamageSource 后
+     * instanceof 为假 → 事件不触发 → **"装了哭泣之子后武器技能进度条不再增长"**。
+     * <p>原地改写只碰"这是什么伤害 / 谁打的"这三个字段, 且取值与旧实现完全一致 ⇒
+     * **本 mod 其它附魔效果与死亡消息口径不变**; 保留下来的只有对象身份、子类身份、
+     * 子类私有状态(EF 充能/硬直所需的 basicAttack、animation、伤害修正器)与 damageSourcePosition。
+     *
+     * <p>改写失败(理论上仅当 mixin 未生效)时退回新建普通伤害源, 保证附魔语义不丢。
+     * 转换后**不还原**类型: 死亡消息与其它 mod 的战后判定读的都是同一个对象, 必须看到转换后的类型。
+     */
+    public static DamageSource retypeInPlace(DamageSource source, Holder<DamageType> holder, LivingEntity attacker) {
+        try {
+            DamageSourceTypeAccessor accessor = (DamageSourceTypeAccessor) (Object) source;
+            accessor.zhonz$setDamageType(holder);
+            // 这两个字段与旧实现 new DamageSource(holder, attacker, attacker) 的第 2/3 参数严格对齐:
+            // "谁打的"口径完全不变(近战/投射物的 getEntity()/getDirectEntity()、死亡消息 %2$s/%3$s
+            // 参数与 .item 变体判定都同前)。真正被保留下来的只有 : 对象身份、子类身份与子类私有状态、
+            // 以及 damageSourcePosition(旧实现新建对象会把它丢成 null)。
+            accessor.zhonz$setDirectEntity(attacker);
+            accessor.zhonz$setCausingEntity(attacker);
+            return source;
+        } catch (Throwable t) {
+            return new DamageSource(holder, attacker, attacker);
+        }
     }
 
     private record AttackerType(LivingEntity attacker, ResourceKey<DamageType> typeKey, float multiplier) {

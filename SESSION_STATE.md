@@ -2,7 +2,27 @@
 
 > 用途:长会话压缩参考。新会话/子代理先读此文件再动手。
 
-## 最新状态(2026-09-13 晚, round-eternal:「永劫回归」真实缺陷修复 + 遗留验证项收口 + v1.3.3)
+## 最新状态(2026-09-25, round-death-message:「火焰伤害没有伤害来源」= 缺 `.item` 死讯键)
+
+### ✅ 根因(1.21.1 javap 实测 `DamageSource.getLocalizedDeathMessage`)
+原版死亡消息按来源分三种, 模组三种自定义伤害类型(`weeping_fire`/`frost`/`true_damage`)必须各自齐备:
+| 分支 | 触发条件 | 消息键 | 参数 |
+|---|---|---|---|
+| 基础 | 有来源实体(活体, 主手物品**无** CUSTOM_NAME) | `death.attack.<msgId>` | `[受害者, 攻击者]` |
+| `.item` | 来源实体是活体且**主手物品带 CUSTOM_NAME**(铁砧重命名/自带名) | `death.attack.<msgId>.item` | `[受害者, 攻击者, 物品名]` |
+| `.player` | 无来源实体、但有击杀记录(`getKillCredit()`) | `death.attack.<msgId>.player` | `[受害者, 攻击者]` |
+
+- 用户症状「定义的火焰伤害还是不能正常有伤害来源」= **改过名的武器**击杀时走 `.item`, 而三版本 lang 只有基础键与 `.player`(上一轮只补了基础键的 `%2$s`)⇒ 客户端只能显示未翻译的原始键。
+- 修复: 6 个 lang(3 版本 × 中英)各补 3 个 `.item` 键(+18 行); `ENCHANTMENTS.md:283` 记录三变体; **`WeepingFireHelper.java:64` 的 `new DamageSource(holder, at.attacker, at.attacker)` 本身正确, 勿改**。
+- 1.20.1 侧依据: 原版 client jar 的 `assets/minecraft/lang/en_us.json` 含 `death.attack.{mob,player,arrow}.item`(1.20.1 用 `hasCustomHoverName()` 判定), 平台同样需要 `.item` 键。
+- 验证: `DamageTypeSuites` 新增 `death_message_item_variant_is_localized`(改名武器击杀 → 键必须是 `.item` + 参数含攻击者名与物品名 + 中英模板含 `%2$s`/`%3$s`); **把运行时 lang 的 `.item` 键删掉重跑实测 FAIL、还原 PASS(判别力已证)**; `/zhonztest all` = 119 例/116 通过/0 失败/3 跳过; 主工程 + 两平台 `gradle build` 均 SUCCESSFUL, 三个 jar 内均含 3 个 `.item` 键。提交 `c794685`。
+- ⚠️ **版本号仍是 `mod_version=1.3.4`**: 本地重建的 1.3.4 jar 与**已发布**的 v1.3.4(sha256 `2d320b7b…`)内容已不同 ⇒ 要发布必须先升到 1.3.5。
+
+### 🛠 新增 `tools/check-platform-parity.mjs`(三版本资源门禁)
+- 以主工程 `src/main/resources` 为基准, **语义级**(忽略行尾/BOM)比对两平台白名单资源: `assets/<modid>/lang/*.json`(全键 + 文案)、`data/<modid>/damage_type/*.json`、`data/minecraft/tags/damage_type/*.json`; 漂移时退出码 1, 列出缺失/多余/不一致的键。
+- 现状: PASS —— lang 3×2 文件字节一致; damage_type/tags 仅行尾不同(主工程 CRLF、平台 LF)。
+
+## 历史状态(2026-09-13 晚, round-eternal:「永劫回归」真实缺陷修复 + 遗留验证项收口 + v1.3.3)
 
 ### ✅ #59「永劫回归」(`eternal_return`)—— 旧实现是坏的, 现修好并实测
 **旧实现(1.3.2 及以前)**: `TotemUseMixin` 在**服务器运行中**直接递归删除世界目录, 两个真实缺陷:
